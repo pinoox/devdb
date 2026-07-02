@@ -173,6 +173,12 @@ final class DevDbSqlTranslator
             return 0;
         }
 
+        if (preg_match('/^(?:analyze|optimize|check|repair)\s+table\s+/i', $sql) === 1
+            || preg_match('/^flush\s+/i', $sql) === 1
+            || preg_match('/^alter\s+table\s+[`"\[\]A-Za-z0-9_.-]+\s+(?:disable|enable)\s+keys$/i', $sql) === 1) {
+            return 0;
+        }
+
         if (preg_match('/^create\s+(?:or\s+replace\s+)?view\s+/i', $sql) === 1) {
             $this->createView($sql);
 
@@ -2683,7 +2689,7 @@ final class DevDbSqlTranslator
 
     private function isSupportedStatement(string $sql): bool
     {
-        return preg_match('/^(select|show|describe|desc|explain|insert|update|delete|set|create|drop|use|alter|truncate)\b/i', $sql) === 1;
+        return preg_match('/^(select|show|describe|desc|explain|insert|update|delete|set|create|drop|use|alter|truncate|lock|unlock|analyze|optimize|check|repair|flush)\b/i', $sql) === 1;
     }
 
     private function normalizeSql(string $sql): string

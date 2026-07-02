@@ -52,3 +52,22 @@ SQL);
     expect($target->selectOne('select count(*) as total from users')->total)->toBe(2)
         ->and($target->selectOne("select email from users where id = 2")->email)->toBe('noah@example.com');
 });
+
+it('accepts common MySQL maintenance statements during dump imports', function () {
+    $db = DevDatabase::open(devdb_test_path('compat_mysql_maintenance'));
+
+    $results = $db->executeDump(<<<'SQL'
+CREATE TABLE `notes` (`id` int NOT NULL AUTO_INCREMENT, `body` varchar(120), PRIMARY KEY (`id`));
+ALTER TABLE `notes` DISABLE KEYS;
+INSERT INTO `notes` (`body`) VALUES ('Imported');
+ALTER TABLE `notes` ENABLE KEYS;
+ANALYZE TABLE `notes`;
+OPTIMIZE TABLE `notes`;
+CHECK TABLE `notes`;
+REPAIR TABLE `notes`;
+FLUSH TABLES;
+SQL);
+
+    expect($results)->toHaveCount(9)
+        ->and($db->selectOne('select body from notes')->body)->toBe('Imported');
+});
