@@ -712,7 +712,7 @@ $posts = $connection->select('select * from posts');
 
 ## CLI Commands
 
-The package includes command classes that host applications can register:
+The package includes Symfony Console command classes that host applications can register. In Pinoox or Pinx these commands may be exposed directly by the host CLI. In another framework, register the command classes in your console kernel or command registry.
 
 ```text
 Pinoox\Terminal\DevDB\DevDbStatusCommand
@@ -724,25 +724,85 @@ Pinoox\Terminal\DevDB\DevDbClearCommand
 Pinoox\Terminal\DevDB\DevDbSeedCommand
 ```
 
-Available command names:
+Available command names and what they do:
+
+| Command | Purpose |
+| --- | --- |
+| `devdb:status` | Show the active DevDB engine, storage path, tables, row counts, and migration count. |
+| `devdb:inspect <table>` | Inspect one table, including columns, indexes, primary key, row count, and sample rows. |
+| `devdb:export [file]` | Export the full DevDB payload as JSON. |
+| `devdb:export:mysql [file]` | Export DevDB as a MySQL-compatible SQL dump for phpMyAdmin or MySQL imports. |
+| `devdb:sync:mysql` | Sync DevDB directly into a local MySQL database through `pdo_mysql`. |
+| `devdb:clear` | Clear DevDB storage. Requires confirmation unless `--force` is used. |
+| `devdb:seed [package]` | Run app seeders against DevDB in a Pinoox host application. |
+
+### Check Status
+
+Use `devdb:status` to see where DevDB stores data, which engine is active, and which tables exist.
 
 ```bash
 devdb:status
-devdb:inspect
-devdb:export
-devdb:export:mysql
-devdb:sync:mysql
-devdb:clear
-devdb:seed
 ```
 
-Export a MySQL dump that can be imported into phpMyAdmin:
+JSON output is useful for tools and automation:
+
+```bash
+devdb:status --json
+```
+
+### Inspect a Table
+
+Use `devdb:inspect` when you want to quickly check a table structure and a few rows:
+
+```bash
+devdb:inspect users
+```
+
+Limit the number of previewed rows:
+
+```bash
+devdb:inspect users --limit=50
+```
+
+Return JSON instead of a console table:
+
+```bash
+devdb:inspect users --json
+```
+
+### Export as JSON
+
+Use `devdb:export` to create a portable DevDB backup or debug artifact:
+
+```bash
+devdb:export storage/devdb/export.json
+```
+
+If no file is provided, the JSON is printed to the console:
+
+```bash
+devdb:export
+```
+
+### Export for phpMyAdmin or MySQL
+
+Use `devdb:export:mysql` when you want to inspect DevDB data in phpMyAdmin. The command generates a MySQL-compatible SQL file:
 
 ```bash
 devdb:export:mysql storage/devdb/devdb.sql
 ```
 
-Sync DevDB directly into a local MySQL database:
+Then import `storage/devdb/devdb.sql` into phpMyAdmin.
+
+By default the dump includes `DROP TABLE IF EXISTS` statements so repeated imports are easier during development. Disable that with:
+
+```bash
+devdb:export:mysql storage/devdb/devdb.sql --no-drop
+```
+
+### Sync Directly to MySQL
+
+Use `devdb:sync:mysql` when you have a local MySQL or MariaDB server and want DevDB copied into it automatically:
 
 ```bash
 devdb:sync:mysql --database=app_dev --username=root --password=
@@ -754,7 +814,73 @@ You can also pass a full PDO DSN:
 devdb:sync:mysql --dsn="mysql:host=127.0.0.1;port=3306;dbname=app_dev;charset=utf8mb4" --username=root --password=
 ```
 
-Use `--no-drop` when you do not want the generated SQL to include `DROP TABLE IF EXISTS` statements. Direct sync requires the `pdo_mysql` PHP extension. If it is not available, export the SQL dump and import it manually through phpMyAdmin.
+Available MySQL options:
+
+| Option | Description |
+| --- | --- |
+| `--dsn` | Full PDO MySQL DSN. Overrides `--host`, `--port`, and `--database`. |
+| `--host` | MySQL host. Defaults to `127.0.0.1` or `DEVDB_MYSQL_HOST`. |
+| `--port` | MySQL port. Defaults to `3306` or `DEVDB_MYSQL_PORT`. |
+| `--database` | Target MySQL database. Required unless `--dsn` is provided. |
+| `--username` | MySQL username. Defaults to `root` or `DEVDB_MYSQL_USERNAME`. |
+| `--password` | MySQL password. Defaults to `DEVDB_MYSQL_PASSWORD`. |
+| `--no-drop` | Do not drop existing tables before syncing. |
+
+Direct sync requires the `pdo_mysql` PHP extension. If it is not available, use `devdb:export:mysql` and import the SQL file manually through phpMyAdmin.
+
+### Clear DevDB
+
+Use `devdb:clear` to delete the local DevDB data and metadata:
+
+```bash
+devdb:clear
+```
+
+Skip the confirmation prompt in scripts:
+
+```bash
+devdb:clear --force
+```
+
+### Run Seeders
+
+In a Pinoox host application, `devdb:seed` forces the database connection to DevDB and runs app seeders:
+
+```bash
+devdb:seed com_example_blog
+```
+
+Run only one seeder class:
+
+```bash
+devdb:seed com_example_blog --class="App\\Seeders\\PostSeeder"
+```
+
+Continue when a seeder fails:
+
+```bash
+devdb:seed com_example_blog --force
+```
+
+### Environment Variables
+
+The commands read the normal DevDB environment values:
+
+```dotenv
+DEVDB_ENGINE=auto
+DEVDB_PATH=storage/devdb
+DEVDB_SQLITE_DATABASE=storage/devdb/devdb.sqlite
+```
+
+The MySQL sync command can also read:
+
+```dotenv
+DEVDB_MYSQL_HOST=127.0.0.1
+DEVDB_MYSQL_PORT=3306
+DEVDB_MYSQL_DATABASE=app_dev
+DEVDB_MYSQL_USERNAME=root
+DEVDB_MYSQL_PASSWORD=
+```
 
 Command registration depends on the host application or framework.
 
