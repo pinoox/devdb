@@ -65,6 +65,10 @@ final class DevDbSqlTranslator
     {
         $sql = $this->normalizeSql($sql);
 
+        if ($this->hasTopLevelUnion($sql)) {
+            return $this->selectUnion($sql, $bindings);
+        }
+
         if (preg_match('/^explain\s+(?<sql>select\s+.+)$/is', $sql, $match) === 1) {
             return [(object) $this->explain($match['sql'])];
         }
@@ -146,6 +150,20 @@ final class DevDbSqlTranslator
 
         if (preg_match('/^(?:create|drop)\s+database\s+/i', $sql) === 1 || preg_match('/^use\s+/i', $sql) === 1) {
             return 0;
+        }
+
+        if (preg_match('/^(?:lock\s+tables|unlock\s+tables)/i', $sql) === 1) {
+            return 0;
+        }
+
+        if (preg_match('/^create\s+(?:or\s+replace\s+)?view\s+/i', $sql) === 1) {
+            $this->createView($sql);
+
+            return 0;
+        }
+
+        if (preg_match('/^drop\s+view\s+/i', $sql) === 1) {
+            return $this->dropView($sql);
         }
 
         if (preg_match('/^create\s+table\s+/i', $sql) === 1) {
@@ -387,6 +405,56 @@ final class DevDbSqlTranslator
         return $affected;
     }
 
+    private function createView(string $sql): void
+    {
+        if (preg_match('/^create\s+(?<replace>or\s+replace\s+)?view\s+(?<view>[`"\[\]A-Za-z0-9_.-]+)\s+as\s+(?<select>select\s+.+)$/is', $sql, $match) !== 1) {
+            throw DevDbException::unsupported('raw CREATE VIEW syntax');
+        }
+
+        $view = $this->cleanIdentifier($match['view']);
+        $schema = $this->store->schema();
+        $schema['views'] ??= [];
+
+        if (isset($schema['views'][$view]) && trim((string) ($match['replace'] ?? '')) === '') {
+            throw new DevDbException('DevDB view "' . $view . '" already exists.');
+        }
+
+        $schema['views'][$view] = [
+            'sql' => $this->normalizeSql($match['select']),
+            'updated_at' => date(DATE_ATOM),
+        ];
+        $this->store->saveSchema($schema);
+    }
+
+    private function dropView(string $sql): int
+    {
+        if (preg_match('/^drop\s+view\s+(?<if>if\s+exists\s+)?(?<views>.+)$/is', $sql, $match) !== 1) {
+            throw DevDbException::unsupported('raw DROP VIEW syntax');
+        }
+
+        $schema = $this->store->schema();
+        $schema['views'] ??= [];
+        $affected = 0;
+
+        foreach ($this->splitCsv($match['views']) as $viewName) {
+            $view = $this->cleanIdentifier($viewName);
+            if (!isset($schema['views'][$view])) {
+                if (trim((string) ($match['if'] ?? '')) !== '') {
+                    continue;
+                }
+
+                throw new DevDbException('DevDB view "' . $view . '" does not exist for DROP VIEW.');
+            }
+
+            unset($schema['views'][$view]);
+            $affected++;
+        }
+
+        $this->store->saveSchema($schema);
+
+        return $affected;
+    }
+
     private function alterTable(string $sql): void
     {
         if (preg_match('/^alter\s+table\s+(?<table>[`"\[\]A-Za-z0-9_.-]+)\s+(?<action>.+)$/is', $sql, $match) !== 1) {
@@ -504,10 +572,6 @@ final class DevDbSqlTranslator
     {
         $sql = $this->normalizeSql($sql);
 
-        if (preg_match('/\s+union\s+/i', $sql) === 1) {
-            throw DevDbException::unsupported('raw SELECT unions');
-        }
-
         if (preg_match('/^select\s+(?<distinct>distinct\s+)?(?<columns>.+?)\s+from\s+(?<tail>.+)$/is', $sql, $match) !== 1) {
             throw DevDbException::unsupported('raw SELECT syntax');
         }
@@ -537,6 +601,88 @@ final class DevDbSqlTranslator
         ];
     }
 
+    /**
+     * @return list<object>
+     */
+    private function selectUnion(string $sql, array $bindings): array
+    {
+        $parts = $this->splitUnionStatements($sql);
+        $rows = [];
+        $dedupe = true;
+
+        foreach ($parts as $index => $part) {
+            $dedupe = $dedupe && ($index === 0 || !$part['all']);
+            foreach ($this->select($part['sql'], $bindings) as $row) {
+                $row = (array) $row;
+                if ($rows !== []) {
+                    $keys = array_keys($rows[0]);
+                    $values = array_values($row);
+                    $row = array_combine($keys, array_pad($values, count($keys), null)) ?: $row;
+                }
+
+                $rows[] = $row;
+            }
+        }
+
+        if ($dedupe) {
+            $rows = $this->distinctRows($rows);
+        }
+
+        return array_map(fn (array $row): object => (object) $row, $rows);
+    }
+
+    private function hasTopLevelUnion(string $sql): bool
+    {
+        return count($this->splitUnionStatements($sql)) > 1;
+    }
+
+    /**
+     * @return list<array{sql:string,all:bool}>
+     */
+    private function splitUnionStatements(string $sql): array
+    {
+        $parts = [];
+        $quote = null;
+        $depth = 0;
+        $start = 0;
+        $length = strlen($sql);
+        $nextAll = false;
+
+        for ($i = 0; $i < $length; $i++) {
+            $char = $sql[$i];
+            if ($quote !== null) {
+                if ($char === $quote && ($i === 0 || $sql[$i - 1] !== '\\')) {
+                    $quote = null;
+                }
+                continue;
+            }
+            if ($char === "'" || $char === '"') {
+                $quote = $char;
+                continue;
+            }
+            if ($char === '(') {
+                $depth++;
+                continue;
+            }
+            if ($char === ')') {
+                $depth--;
+                continue;
+            }
+            if ($depth !== 0 || !preg_match('/\G\s+union(?:\s+all)?\s+/i', $sql, $match, 0, $i)) {
+                continue;
+            }
+
+            $parts[] = ['sql' => trim(substr($sql, $start, $i - $start)), 'all' => $nextAll];
+            $nextAll = stripos($match[0], 'all') !== false;
+            $i += strlen($match[0]) - 1;
+            $start = $i + 1;
+        }
+
+        $parts[] = ['sql' => trim(substr($sql, $start)), 'all' => $nextAll];
+
+        return array_values(array_filter($parts, fn (array $part): bool => $part['sql'] !== ''));
+    }
+
     private function extractLeadingSource(string $tail): string
     {
         $positions = [];
@@ -563,24 +709,23 @@ final class DevDbSqlTranslator
         }
 
         $from = $this->parseTableAlias((string) array_shift($parts));
-        $this->assertTable($from['name']);
+        $this->assertSource($from['name']);
         $joins = [];
 
         while ($parts !== []) {
             $type = strtolower(trim((string) array_shift($parts)));
             $body = trim((string) array_shift($parts));
-            if (preg_match('/^(?<table>.+?)\s+on\s+(?<first>[`"\[\]A-Za-z0-9_.-]+)\s*=\s*(?<second>[`"\[\]A-Za-z0-9_.-]+)$/is', $body, $match) !== 1) {
+            if (preg_match('/^(?<table>.+?)\s+on\s+(?<condition>.+)$/is', $body, $match) !== 1) {
                 throw DevDbException::unsupported('raw JOIN syntax');
             }
 
             $table = $this->parseTableAlias($match['table']);
-            $this->assertTable($table['name']);
+            $this->assertSource($table['name']);
             $joins[] = [
                 'type' => str_starts_with($type, 'left') ? 'left' : 'inner',
                 'table' => $table['name'],
                 'alias' => $table['alias'],
-                'first' => $this->cleanIdentifier($match['first'], false),
-                'second' => $this->cleanIdentifier($match['second'], false),
+                'condition' => trim($match['condition']),
             ];
         }
 
@@ -611,13 +756,13 @@ final class DevDbSqlTranslator
     {
         $rows = array_map(
             fn (array $row): array => $this->qualifyRow($row, $from['name'], $from['alias']),
-            $this->store->readTable($from['name']),
+            $this->readSourceRows($from['name']),
         );
 
         foreach ($joins as $join) {
             $joinRows = array_map(
                 fn (array $row): array => $this->qualifyRow($row, $join['table'], $join['alias']),
-                $this->store->readTable($join['table']),
+                $this->readSourceRows($join['table']),
             );
             $nullJoinRow = $this->nullRow($join['table'], $join['alias']);
             $combinedRows = [];
@@ -626,7 +771,7 @@ final class DevDbSqlTranslator
                 $matched = false;
                 foreach ($joinRows as $joinRow) {
                     $combined = array_replace($row, $joinRow);
-            if ($this->expressionValue($combined, $join['first']) == $this->expressionValue($combined, $join['second'])) {
+                    if ($this->matchesWhere($combined, $join['condition'], [])) {
                         $combinedRows[] = $combined;
                         $matched = true;
                     }
@@ -657,6 +802,10 @@ final class DevDbSqlTranslator
     private function nullRow(string $table, string $alias): array
     {
         $columns = array_keys($this->store->schema()['tables'][$table]['columns'] ?? []);
+        if ($columns === [] && $this->hasView($table)) {
+            $first = $this->readSourceRows($table)[0] ?? [];
+            $columns = array_keys($first);
+        }
         $row = [];
 
         foreach ($columns as $column) {
@@ -741,7 +890,7 @@ final class DevDbSqlTranslator
 
         if (preg_match('/^(?<expression>.+?)\s*(?<operator>=|==|!=|<>|>=|<=|>|<|like|not\s+like)\s*(?<value>.+)$/is', $condition, $match) === 1) {
             $actual = $this->expressionValue($row, $match['expression'], $bindings, $bindingsUsed);
-            $expected = $this->parseValue($match['value'], $bindings, $bindingsUsed);
+            $expected = $this->conditionValue($row, $match['value'], $bindings, $bindingsUsed);
 
             return $this->compare($actual, strtolower($match['operator']), $expected);
         }
@@ -753,11 +902,40 @@ final class DevDbSqlTranslator
     {
         $actual = $this->expressionValue($row, $expression, $bindings, $bindingsUsed);
         $values = [];
+
+        $subquery = $this->unwrapSubquery($valuesSql);
+        if ($subquery !== null) {
+            foreach ($this->select($subquery, $bindings) as $selected) {
+                $values[] = array_values((array) $selected)[0] ?? null;
+            }
+
+            return in_array($actual, $values, false);
+        }
+
         foreach ($this->splitCsv($valuesSql) as $value) {
             $values[] = $this->parseValue($value, $bindings, $bindingsUsed);
         }
 
         return in_array($actual, $values, false);
+    }
+
+    private function conditionValue(array $row, string $value, array $bindings, int &$bindingsUsed): mixed
+    {
+        $value = trim($value);
+
+        if ($value === '?'
+            || strtolower($value) === 'null'
+            || strtolower($value) === 'true'
+            || strtolower($value) === 'false'
+            || strtolower($value) === 'default'
+            || is_numeric($value)
+            || ((str_starts_with($value, "'") && str_ends_with($value, "'"))
+                || (str_starts_with($value, '"') && str_ends_with($value, '"')))
+            || $this->unwrapSubquery($value) !== null) {
+            return $this->parseValue($value, $bindings, $bindingsUsed);
+        }
+
+        return $this->expressionValue($row, $value, $bindings, $bindingsUsed);
     }
 
     private function compare(mixed $actual, string $operator, mixed $expected): bool
@@ -904,6 +1082,13 @@ final class DevDbSqlTranslator
     {
         $value = trim($value);
 
+        $subquery = $this->unwrapSubquery($value);
+        if ($subquery !== null) {
+            $row = $this->select($subquery, $bindings)[0] ?? null;
+
+            return $row === null ? null : (array_values((array) $row)[0] ?? null);
+        }
+
         if ($value === '?') {
             if (!array_key_exists($bindingOffset, $bindings)) {
                 throw new DevDbException('DevDB raw SQL binding is missing for placeholder #' . ($bindingOffset + 1) . '.');
@@ -924,6 +1109,13 @@ final class DevDbSqlTranslator
             'false' => false,
             default => is_numeric($value) ? ($value + 0) : $this->cleanIdentifier($value, false),
         };
+    }
+
+    private function unwrapSubquery(string $value): ?string
+    {
+        $value = $this->trimOuterParentheses(trim($value));
+
+        return preg_match('/^select\s+.+$/is', $value) === 1 ? $value : null;
     }
 
     /**
@@ -1444,6 +1636,13 @@ final class DevDbSqlTranslator
             return $this->evaluateFunction($function, $values);
         }
 
+        if (preg_match('/^(?<left>.+?)\s*(?<operator>=|==|!=|<>|>=|<=|>|<)\s*(?<right>.+)$/is', $expression, $match) === 1) {
+            $left = $this->expressionValue($row, $match['left'], $bindings, $bindingOffset);
+            $right = $this->conditionValue($row, $match['right'], $bindings, $bindingOffset);
+
+            return $this->compare($left, strtolower($match['operator']), $right);
+        }
+
         return $this->valueForColumn($row, $expression);
     }
 
@@ -1469,23 +1668,45 @@ final class DevDbSqlTranslator
             'rtrim' => rtrim((string) ($values[0] ?? '')),
             'length', 'char_length', 'character_length' => strlen((string) ($values[0] ?? '')),
             'coalesce', 'ifnull' => $this->firstNonNull($values),
+            'if' => !empty($values[0]) ? ($values[1] ?? null) : ($values[2] ?? null),
             'nullif' => ($values[0] ?? null) == ($values[1] ?? null) ? null : ($values[0] ?? null),
             'concat' => implode('', array_map(fn (mixed $value): string => (string) $value, $values)),
+            'left' => substr((string) ($values[0] ?? ''), 0, max(0, (int) ($values[1] ?? 0))),
+            'right' => substr((string) ($values[0] ?? ''), -max(0, (int) ($values[1] ?? 0))),
             'substr', 'substring' => substr(
                 (string) ($values[0] ?? ''),
                 max(0, (int) ($values[1] ?? 1) - 1),
                 isset($values[2]) ? (int) $values[2] : null,
             ),
             'replace' => str_replace((string) ($values[1] ?? ''), (string) ($values[2] ?? ''), (string) ($values[0] ?? '')),
+            'greatest' => $values === [] ? null : max($values),
+            'least' => $values === [] ? null : min($values),
             'abs' => abs((float) ($values[0] ?? 0)),
             'round' => round((float) ($values[0] ?? 0), (int) ($values[1] ?? 0)),
             'floor' => floor((float) ($values[0] ?? 0)),
             'ceil', 'ceiling' => ceil((float) ($values[0] ?? 0)),
+            'date_format' => $this->formatDate((string) ($values[0] ?? 'now'), $this->mysqlDateFormat((string) ($values[1] ?? '%Y-%m-%d'))),
             'current_date' => date('Y-m-d'),
             'current_time' => date('H:i:s'),
             'current_timestamp', 'now' => date('Y-m-d H:i:s'),
             default => throw DevDbException::unsupported('raw SQL function "' . strtoupper($function) . '"'),
         };
+    }
+
+    private function mysqlDateFormat(string $format): string
+    {
+        return strtr($format, [
+            '%Y' => 'Y',
+            '%y' => 'y',
+            '%m' => 'm',
+            '%c' => 'n',
+            '%d' => 'd',
+            '%e' => 'j',
+            '%H' => 'H',
+            '%h' => 'h',
+            '%i' => 'i',
+            '%s' => 's',
+        ]);
     }
 
     private function formatDate(mixed $value, string $format): ?string
@@ -1573,6 +1794,29 @@ final class DevDbSqlTranslator
         $short = $this->shortColumn($column);
 
         return $row[$short] ?? null;
+    }
+
+    /**
+     * @return list<array<string,mixed>>
+     */
+    private function readSourceRows(string $source): array
+    {
+        if ($this->store->hasTable($source)) {
+            return $this->store->readTable($source);
+        }
+
+        $schema = $this->store->schema();
+        $view = $schema['views'][$source] ?? null;
+        if (is_array($view) && isset($view['sql'])) {
+            return array_map(fn (object $row): array => (array) $row, $this->select((string) $view['sql']));
+        }
+
+        throw new DevDbException('DevDB source "' . $source . '" does not exist for raw SQL query.');
+    }
+
+    private function hasView(string $view): bool
+    {
+        return isset(($this->store->schema()['views'] ?? [])[$view]);
     }
 
     private function containsAggregate(string $columns): bool
@@ -1884,6 +2128,13 @@ final class DevDbSqlTranslator
     {
         if (!$this->store->hasTable($table)) {
             throw new DevDbException('DevDB table "' . $table . '" does not exist for raw SQL query.');
+        }
+    }
+
+    private function assertSource(string $source): void
+    {
+        if (!$this->store->hasTable($source) && !$this->hasView($source)) {
+            throw new DevDbException('DevDB source "' . $source . '" does not exist for raw SQL query.');
         }
     }
 

@@ -257,15 +257,15 @@ DevDB aims to cover the SQL and query behavior developers commonly hit while bui
 | --- | --- | --- |
 | CRUD query builder | Supported | `insert`, `update`, `delete`, `first`, `get`, `count`, `exists`, pagination-style limits |
 | Raw `SELECT` | Supported | aliases, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `LIMIT`, `OFFSET`, `DISTINCT` |
-| Joins | Partial | inner and left joins with simple equality conditions |
+| Joins | Partial | inner and left joins with common `ON` conditions, including grouped `AND`/`OR` predicates |
 | Aggregates | Supported | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` |
-| SQL functions | Partial | common scalar/date/string/math functions used in development queries |
+| SQL functions | Partial | common scalar/date/string/math functions used in development queries, plus helpers such as `IF`, `GREATEST`, `LEAST`, `LEFT`, `RIGHT`, and `DATE_FORMAT` |
 | Schema SQL | Partial | common `CREATE`, `DROP`, `ALTER`, `SHOW`, `DESCRIBE`, and index statements |
 | MySQL dump imports | Partial | common dump syntax, comments, `SET`, `AUTO_INCREMENT`, table options, and multi-statement execution |
 | Constraints | Partial | strict checks for `NOT NULL`, `ENUM`, `UNIQUE`, primary keys, and simple foreign keys |
 | Transactions | Development-safe | snapshot-backed rollback, not isolation-level database transactions |
-| Locks | No-op | accepted for compatibility where possible, not real database locks |
-| Advanced SQL | Unsupported | `UNION`, CTEs, windows, triggers, views, stored procedures, complex subqueries |
+| Locks | Compatibility no-op | `LOCK TABLES` and `UNLOCK TABLES` are accepted but do not provide real locking |
+| Advanced SQL | Partial | `UNION`, `UNION ALL`, simple subqueries, scalar subqueries, and simple views are supported |
 
 ## Raw SQL Support
 
@@ -275,6 +275,8 @@ Supported data statements:
 
 - `SELECT`
 - `SELECT DISTINCT`
+- `SELECT ... UNION SELECT ...`
+- `SELECT ... UNION ALL SELECT ...`
 - `INSERT`
 - `INSERT INTO ... VALUES` with or without an explicit column list
 - `INSERT INTO ... SELECT`
@@ -295,6 +297,9 @@ Supported `SELECT` features:
 - `ORDER BY`
 - `LIMIT`
 - `OFFSET`
+- simple subqueries in `IN (...)`
+- scalar subqueries in comparisons
+- simple views created with `CREATE VIEW ... AS SELECT ...`
 
 Supported operators and predicates:
 
@@ -319,6 +324,7 @@ Supported operators and predicates:
 - `NOT`
 - `EXISTS`
 - `NOT EXISTS`
+- scalar subquery comparisons
 
 Supported development helpers:
 
@@ -326,6 +332,7 @@ Supported development helpers:
 - `explain()` for inspecting how DevDB understands a query
 - strict constraint validation, enabled by default
 - parenthesized boolean groups
+- compatibility no-op handling for `LOCK TABLES` and `UNLOCK TABLES`
 
 Supported aggregate functions:
 
@@ -407,6 +414,12 @@ DevDB also accepts common MySQL dump compatibility syntax such as:
 - `INDEX ... USING BTREE`
 - `FOREIGN KEY ... REFERENCES ... ON DELETE ... ON UPDATE ...`
 - `ENUM(...)`
+- `CREATE VIEW ... AS SELECT ...`
+- `CREATE OR REPLACE VIEW ... AS SELECT ...`
+- `DROP VIEW`
+- `DROP VIEW IF EXISTS`
+- `LOCK TABLES ...`
+- `UNLOCK TABLES`
 - `CREATE DATABASE`, `DROP DATABASE`, and `USE` as local compatibility no-op statements
 - `SHOW DATABASES`
 
@@ -676,20 +689,19 @@ DevDB is intentionally not a full SQL server.
 
 Unsupported or limited features include:
 
-- `UNION`
-- broad subquery support beyond simple `EXISTS`
-- recursive queries
-- complex multi-condition join clauses
-- vendor-specific SQL functions
+- recursive CTE queries
+- window functions
+- correlated subqueries that reference the outer row
+- full SQL optimizer behavior
+- every vendor-specific SQL function
 - full foreign key cascade behavior
 - stored procedures
 - triggers
-- views
 - isolation-level transaction behavior
-- database locks
+- real database locks
 - production workloads
 
-When a query is not supported, DevDB throws a clear exception. For complex SQL compatibility, use SQLite, MySQL, PostgreSQL, or another real database engine.
+DevDB now supports common `UNION`, `UNION ALL`, simple subqueries, simple views, compatibility locks, and many MySQL-style functions. When a query is still not supported, DevDB throws a clear exception. For exact SQL-server behavior, use SQLite, MySQL, PostgreSQL, or another real database engine.
 
 ## Package Structure
 

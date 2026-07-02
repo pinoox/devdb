@@ -196,12 +196,49 @@ SQL);
         ->toThrow(DevDbException::class, 'NOT NULL constraint');
 });
 
+it('supports unions, simple subqueries, views, conditional joins, locks, and more functions', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_compat_expanded'));
+    $db->executeDump(<<<'SQL'
+CREATE TABLE users (id integer primary key auto_increment, name varchar(80), role varchar(20));
+CREATE TABLE posts (id integer primary key auto_increment, user_id integer, title varchar(120), status varchar(20), views int, created_at datetime);
+INSERT INTO users (name, role) VALUES ('Ava', 'editor'), ('Noah', 'author'), ('Mina', 'author');
+INSERT INTO posts (user_id, title, status, views, created_at) VALUES
+  (1, 'Launch', 'published', 10, '2026-06-29 10:15:00'),
+  (2, 'Draft', 'draft', 4, '2026-06-30 11:00:00'),
+  (3, 'Guide', 'published', 7, '2026-07-01 09:00:00');
+CREATE VIEW published_posts AS SELECT id, user_id, title, views FROM posts WHERE status = 'published';
+LOCK TABLES posts READ;
+UNLOCK TABLES;
+SQL);
+
+    $union = $db->select("select name from users where role = 'editor' union select title from posts where status = 'draft'");
+    $unionAll = $db->select("select role from users where role = 'author' union all select role from users where role = 'author'");
+    $subquery = $db->select('select title from posts where user_id in (select id from users where role = ?) order by id', ['author']);
+    $scalar = $db->selectOne('select title from posts where views = (select max(views) from posts)');
+    $view = $db->select('select title from published_posts order by id');
+    $joined = $db->select("select u.name, p.title from users u left join posts p on u.id = p.user_id and p.status = 'published' where u.role = 'author' order by u.id");
+    $functions = $db->selectOne("select if(views > 5, 'hot', 'cold') as mood, greatest(views, 20) as top_views, least(views, 5) as low_views, left(title, 2) as left_title, right(title, 2) as right_title, date_format(created_at, '%Y/%m/%d') as day from posts where title = 'Launch'");
+
+    expect(array_map(fn ($row) => $row->name, $union))->toBe(['Ava', 'Draft'])
+        ->and(array_map(fn ($row) => $row->role, $unionAll))->toBe(['author', 'author', 'author', 'author'])
+        ->and(array_map(fn ($row) => $row->title, $subquery))->toBe(['Draft', 'Guide'])
+        ->and($scalar->title)->toBe('Launch')
+        ->and(array_map(fn ($row) => $row->title, $view))->toBe(['Launch', 'Guide'])
+        ->and(array_map(fn ($row) => $row->title, $joined))->toBe([null, 'Guide'])
+        ->and($functions->mood)->toBe('hot')
+        ->and($functions->top_views)->toBe(20)
+        ->and($functions->low_views)->toBe(5)
+        ->and($functions->left_title)->toBe('La')
+        ->and($functions->right_title)->toBe('ch')
+        ->and($functions->day)->toBe('2026/06/29');
+});
+
 it('throws useful errors for unsupported or invalid raw SQL', function () {
     $db = DevDatabase::open(devdb_test_path('raw_errors'));
     $db->statement('create table posts (id integer primary key, title varchar(120))');
 
-    expect(fn () => $db->select('select id from posts union select id from posts'))
-        ->toThrow(DevDbException::class, 'raw SELECT unions')
-        ->and(fn () => $db->statement('create view recent_posts as select * from posts'))
-        ->toThrow(DevDbException::class, 'raw SQL statement "CREATE"');
+    expect(fn () => $db->statement('create trigger posts_ai after insert on posts for each row set @x = 1'))
+        ->toThrow(DevDbException::class, 'raw SQL statement "CREATE"')
+        ->and(fn () => $db->select('with recursive ids as (select 1) select * from ids'))
+        ->toThrow(DevDbException::class, 'raw SELECT syntax');
 });
