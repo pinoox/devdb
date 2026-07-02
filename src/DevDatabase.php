@@ -127,6 +127,27 @@ final class DevDatabase
         return true;
     }
 
+    public function savepoint(string $name): bool
+    {
+        $this->store->savepoint($name);
+
+        return true;
+    }
+
+    public function rollbackToSavepoint(string $name): bool
+    {
+        $this->store->rollbackToSavepoint($name);
+
+        return true;
+    }
+
+    public function releaseSavepoint(string $name): bool
+    {
+        $this->store->releaseSavepoint($name);
+
+        return true;
+    }
+
     public function snapshot(?string $name = null): array
     {
         return $this->store->snapshot($name);

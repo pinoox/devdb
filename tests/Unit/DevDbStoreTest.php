@@ -79,6 +79,31 @@ it('exports, imports, clears, and restores transaction snapshots', function () {
     devdb_remove_path($path);
 });
 
+it('supports named savepoints inside development transactions', function () {
+    $path = devdb_test_path('store_savepoints');
+    $store = new DevDbStore($path);
+    $store->createTable('notes', [
+        'id' => ['type' => 'integer', 'primary' => true],
+        'body' => ['type' => 'string'],
+    ]);
+    $store->replaceTable('notes', [['id' => 1, 'body' => 'Start']]);
+
+    $store->beginTransaction();
+    $store->replaceTable('notes', [['id' => 1, 'body' => 'Step 1']]);
+    $store->savepoint('after_step_1');
+    $store->replaceTable('notes', [['id' => 1, 'body' => 'Step 2']]);
+    $store->rollbackToSavepoint('after_step_1');
+
+    expect($store->inspectTable('notes')['rows'][0]['body'])->toBe('Step 1');
+
+    $store->releaseSavepoint('after_step_1');
+    expect(fn () => $store->rollbackToSavepoint('after_step_1'))
+        ->toThrow(DevDbException::class, 'savepoint');
+
+    $store->commitTransaction();
+    devdb_remove_path($path);
+});
+
 it('creates, restores, lists, and deletes named snapshots', function () {
     $path = devdb_test_path('store_snapshots');
     $store = new DevDbStore($path);

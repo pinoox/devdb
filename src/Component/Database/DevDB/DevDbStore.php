@@ -13,6 +13,9 @@ final class DevDbStore
     /** @var list<array<string, mixed>> */
     private array $transactionSnapshots = [];
 
+    /** @var array<string,array<string,mixed>> */
+    private array $savepoints = [];
+
     public function __construct(?string $root = null)
     {
         $this->root = rtrim(str_replace('\\', '/', $root ?? SystemConfig::resolvePath('~/storage/devdb')), '/');
@@ -371,6 +374,9 @@ final class DevDbStore
     public function commitTransaction(): void
     {
         array_pop($this->transactionSnapshots);
+        if ($this->transactionSnapshots === []) {
+            $this->savepoints = [];
+        }
     }
 
     public function rollbackTransaction(): void
@@ -379,11 +385,43 @@ final class DevDbStore
         if (is_array($snapshot)) {
             $this->import($snapshot);
         }
+        if ($this->transactionSnapshots === []) {
+            $this->savepoints = [];
+        }
     }
 
     public function transactionLevel(): int
     {
         return count($this->transactionSnapshots);
+    }
+
+    public function savepoint(string $name): void
+    {
+        if ($this->transactionSnapshots === []) {
+            $this->beginTransaction();
+        }
+
+        $this->savepoints[$this->normalizeSavepointName($name)] = $this->export();
+    }
+
+    public function rollbackToSavepoint(string $name): void
+    {
+        $key = $this->normalizeSavepointName($name);
+        if (!isset($this->savepoints[$key])) {
+            throw new DevDbException('DevDB savepoint "' . $name . '" does not exist.');
+        }
+
+        $this->import($this->savepoints[$key]);
+    }
+
+    public function releaseSavepoint(string $name): void
+    {
+        unset($this->savepoints[$this->normalizeSavepointName($name)]);
+    }
+
+    private function normalizeSavepointName(string $name): string
+    {
+        return strtolower(trim($name));
     }
 
     public function nextId(string $table): int
