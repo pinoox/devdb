@@ -224,10 +224,11 @@ final class DevDbSqlTranslator
 
         $table = $this->cleanIdentifier($match['table']);
         $this->assertTable($table);
+        [$valuesSql, $duplicateSql] = $this->splitOnDuplicateKey((string) $match['values']);
         $columns = isset($match['columns']) && trim((string) $match['columns']) !== ''
             ? array_map(fn (string $column): string => $this->cleanIdentifier($column), $this->splitCsv($match['columns']))
             : array_keys($this->store->schema()['tables'][$table]['columns'] ?? []);
-        $groups = $this->parseValueGroups($match['values']);
+        $groups = $this->parseValueGroups($valuesSql);
         $rows = $this->store->readTable($table);
         $primaryKey = $this->primaryKey($table);
         $bindingOffset = 0;
@@ -256,6 +257,16 @@ final class DevDbSqlTranslator
 
             $row = $this->applyColumnDefaults($table, $row);
             $this->guardColumnConstraints($table, $row);
+            $duplicateIndex = $duplicateSql !== null ? $this->duplicateRowIndex($table, $row, $rows) : null;
+            if ($duplicateIndex !== null) {
+                $rows[$duplicateIndex] = array_replace(
+                    (array) $rows[$duplicateIndex],
+                    $this->parseDuplicateAssignments($duplicateSql, $row, $bindings, $bindingOffset),
+                );
+                $this->guardColumnConstraints($table, $rows[$duplicateIndex]);
+                $affected++;
+                continue;
+            }
             $this->guardUniqueConstraints($table, $row, $rows);
             $this->guardForeignKeyConstraints($table, $row);
             $rows[] = $row;
@@ -265,6 +276,76 @@ final class DevDbSqlTranslator
         $this->store->replaceTable($table, $rows);
 
         return $affected;
+    }
+
+    /**
+     * @return array{0:string,1:?string}
+     */
+    private function splitOnDuplicateKey(string $values): array
+    {
+        $parts = $this->splitByTopLevelPattern($values, '/\s+on\s+duplicate\s+key\s+update\s+/i');
+
+        return [$parts[0], $parts[1] ?? null];
+    }
+
+    private function duplicateRowIndex(string $table, array $candidate, array $rows): ?int
+    {
+        $schema = $this->store->schema();
+        $meta = $schema['tables'][$table] ?? [];
+        $indexes = [];
+
+        if (!empty($meta['primary_key'])) {
+            $indexes[] = ['columns' => [(string) $meta['primary_key']]];
+        }
+
+        foreach (($meta['indexes'] ?? []) as $index) {
+            if (in_array((string) ($index['name'] ?? ''), ['primary', 'unique'], true)) {
+                $indexes[] = $index;
+            }
+        }
+
+        foreach ($indexes as $index) {
+            $columns = array_values((array) ($index['columns'] ?? $index['column'] ?? []));
+            if ($columns === [] || in_array(null, array_map(fn (string $column): mixed => $candidate[$column] ?? null, $columns), true)) {
+                continue;
+            }
+
+            foreach ($rows as $offset => $row) {
+                $matched = true;
+                foreach ($columns as $column) {
+                    if (($row[(string) $column] ?? null) !== ($candidate[(string) $column] ?? null)) {
+                        $matched = false;
+                        break;
+                    }
+                }
+
+                if ($matched) {
+                    return (int) $offset;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function parseDuplicateAssignments(string $sql, array $insertedRow, array $bindings, int &$bindingOffset): array
+    {
+        $assignments = [];
+        foreach ($this->splitCsv($sql) as $assignment) {
+            if (preg_match('/^(?<column>[`"\[\]A-Za-z0-9_.-]+)\s*=\s*(?<value>.+)$/is', trim($assignment), $match) !== 1) {
+                throw DevDbException::unsupported('ON DUPLICATE KEY UPDATE assignment "' . $assignment . '"');
+            }
+
+            $value = trim($match['value']);
+            if (preg_match('/^values\s*\((?<column>[`"\[\]A-Za-z0-9_.-]+)\)$/i', $value, $valueMatch) === 1) {
+                $assignments[$this->cleanIdentifier($match['column'])] = $insertedRow[$this->cleanIdentifier($valueMatch['column'])] ?? null;
+                continue;
+            }
+
+            $assignments[$this->cleanIdentifier($match['column'])] = $this->parseValue($value, $bindings, $bindingOffset);
+        }
+
+        return $assignments;
     }
 
     private function insertFromSelect(array $match, array $bindings): int
@@ -1626,6 +1707,10 @@ final class DevDbSqlTranslator
             return $row;
         }
 
+        if (preg_match('/^case\s+(?<body>.+)\s+end$/is', $expression, $caseMatch) === 1) {
+            return $this->evaluateCaseExpression($row, $caseMatch['body'], $bindings, $bindingOffset);
+        }
+
         if ($expression === '?'
             || strtolower($expression) === 'null'
             || strtolower($expression) === 'true'
@@ -1659,6 +1744,24 @@ final class DevDbSqlTranslator
         }
 
         return $this->valueForColumn($row, $expression);
+    }
+
+    private function evaluateCaseExpression(array $row, string $body, array $bindings, int &$bindingOffset): mixed
+    {
+        $else = null;
+        if (preg_match('/\s+else\s+(?<else>.+)$/is', $body, $elseMatch) === 1) {
+            $else = $elseMatch['else'];
+            $body = substr($body, 0, (int) strpos(strtolower($body), ' else '));
+        }
+
+        preg_match_all('/when\s+(?<condition>.+?)\s+then\s+(?<value>.+?)(?=\s+when\s+|$)/is', $body, $matches, PREG_SET_ORDER);
+        foreach ($matches as $match) {
+            if ($this->matchesWhere($row, $match['condition'], $bindings, $bindingOffset)) {
+                return $this->conditionValue($row, $match['value'], $bindings, $bindingOffset);
+            }
+        }
+
+        return $else === null ? null : $this->conditionValue($row, $else, $bindings, $bindingOffset);
     }
 
     /**
@@ -1927,6 +2030,46 @@ final class DevDbSqlTranslator
         $parts[] = trim(substr($value, $start));
 
         return array_values(array_filter($parts, fn (string $part): bool => $part !== ''));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function splitByTopLevelPattern(string $value, string $pattern): array
+    {
+        $quote = null;
+        $depth = 0;
+        $length = strlen($value);
+
+        for ($i = 0; $i < $length; $i++) {
+            $char = $value[$i];
+            if ($quote !== null) {
+                if ($char === $quote && ($i === 0 || $value[$i - 1] !== '\\')) {
+                    $quote = null;
+                }
+                continue;
+            }
+            if ($char === "'" || $char === '"') {
+                $quote = $char;
+                continue;
+            }
+            if ($char === '(') {
+                $depth++;
+                continue;
+            }
+            if ($char === ')') {
+                $depth--;
+                continue;
+            }
+            if ($depth === 0 && preg_match($pattern, $value, $match, PREG_OFFSET_CAPTURE, $i) === 1 && $match[0][1] === $i) {
+                return [
+                    trim(substr($value, 0, $i)),
+                    trim(substr($value, $i + strlen($match[0][0]))),
+                ];
+            }
+        }
+
+        return [trim($value)];
     }
 
     private function extractClause(string $tail, string $clause, array $until): string

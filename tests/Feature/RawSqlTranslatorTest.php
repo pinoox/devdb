@@ -233,6 +233,27 @@ SQL);
         ->and($functions->day)->toBe('2026/06/29');
 });
 
+it('supports CASE expressions and ON DUPLICATE KEY UPDATE', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_case_duplicate'));
+    $db->executeDump(<<<'SQL'
+CREATE TABLE users (
+  id integer primary key auto_increment,
+  email varchar(120) not null,
+  name varchar(80),
+  logins int default 0,
+  UNIQUE INDEX users_email_unique (email)
+);
+INSERT INTO users (email, name, logins) VALUES ('ava@example.com', 'Ava', 1);
+SQL);
+
+    $db->statement("insert into users (email, name, logins) values ('ava@example.com', 'Ava Dev', 2) on duplicate key update name = values(name), logins = values(logins)");
+    $row = $db->selectOne("select name, logins, case when logins >= 2 then 'active' else 'new' end as segment from users where email = 'ava@example.com'");
+
+    expect($row->name)->toBe('Ava Dev')
+        ->and($row->logins)->toBe(2)
+        ->and($row->segment)->toBe('active');
+});
+
 it('throws useful errors for unsupported or invalid raw SQL', function () {
     $db = DevDatabase::open(devdb_test_path('raw_errors'));
     $db->statement('create table posts (id integer primary key, title varchar(120))');
