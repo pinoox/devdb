@@ -718,6 +718,8 @@ The package includes command classes that host applications can register:
 Pinoox\Terminal\DevDB\DevDbStatusCommand
 Pinoox\Terminal\DevDB\DevDbInspectCommand
 Pinoox\Terminal\DevDB\DevDbExportCommand
+Pinoox\Terminal\DevDB\DevDbExportMySqlCommand
+Pinoox\Terminal\DevDB\DevDbSyncMySqlCommand
 Pinoox\Terminal\DevDB\DevDbClearCommand
 Pinoox\Terminal\DevDB\DevDbSeedCommand
 ```
@@ -728,9 +730,31 @@ Available command names:
 devdb:status
 devdb:inspect
 devdb:export
+devdb:export:mysql
+devdb:sync:mysql
 devdb:clear
 devdb:seed
 ```
+
+Export a MySQL dump that can be imported into phpMyAdmin:
+
+```bash
+devdb:export:mysql storage/devdb/devdb.sql
+```
+
+Sync DevDB directly into a local MySQL database:
+
+```bash
+devdb:sync:mysql --database=app_dev --username=root --password=
+```
+
+You can also pass a full PDO DSN:
+
+```bash
+devdb:sync:mysql --dsn="mysql:host=127.0.0.1;port=3306;dbname=app_dev;charset=utf8mb4" --username=root --password=
+```
+
+Use `--no-drop` when you do not want the generated SQL to include `DROP TABLE IF EXISTS` statements. Direct sync requires the `pdo_mysql` PHP extension. If it is not available, export the SQL dump and import it manually through phpMyAdmin.
 
 Command registration depends on the host application or framework.
 
@@ -768,12 +792,15 @@ src/
     DevDbSchemaBuilder.php
     DevDbSqlTranslator.php
     DevDbStore.php
+    DevDbMySqlExporter.php
   Terminal/DevDB/
     Concerns/UsesDevDbStore.php
     DevDbClearCommand.php
     DevDbExportCommand.php
+    DevDbExportMySqlCommand.php
     DevDbInspectCommand.php
     DevDbSeedCommand.php
+    DevDbSyncMySqlCommand.php
     DevDbStatusCommand.php
 ```
 
