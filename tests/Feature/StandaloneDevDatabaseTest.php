@@ -89,7 +89,8 @@ CREATE TABLE `pages` (
   `page_id` int NOT NULL AUTO_INCREMENT,
   `title` varchar(120) NOT NULL,
   `status` enum('draft','published') NOT NULL DEFAULT 'draft',
-  PRIMARY KEY (`page_id`)
+  PRIMARY KEY (`page_id`),
+  INDEX `pages_status_index` (`status`)
 ) ENGINE = InnoDB AUTO_INCREMENT = 10 DEFAULT CHARSET = utf8mb4;
 INSERT INTO `pages` (`title`, `status`) VALUES ('Home', 'published'), ('Draft', DEFAULT);
 SQL);
@@ -102,6 +103,8 @@ SQL);
         ->and($plan['table'])->toBe('pages')
         ->and($plan['alias'])->toBe('p')
         ->and($plan['scan']['estimated_rows'])->toBe(2)
+        ->and($plan['scan']['uses_metadata_indexes'])->toBeTrue()
+        ->and(array_column($plan['scan']['metadata_indexes'], 'name'))->toContain('PRIMARY', 'pages_status_index')
         ->and(array_map(fn ($row) => $row->page_id, $rows))->toBe([10, 11])
         ->and($rows[1]->status)->toBe('draft');
 

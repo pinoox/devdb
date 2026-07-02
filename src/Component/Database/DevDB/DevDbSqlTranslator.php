@@ -43,6 +43,8 @@ final class DevDbSqlTranslator
 
         if (preg_match('/^select\s+/i', $normalized) === 1) {
             $query = $this->parseSelect($normalized);
+            $indexMatches = $this->metadataIndexMatches($query['from']['name'], $query['where'], $query['order']);
+            $estimatedRows = count($this->readSourceRows($query['from']['name']));
 
             return [
                 'type' => 'select',
@@ -51,8 +53,10 @@ final class DevDbSqlTranslator
                 'joins' => $query['joins'],
                 'scan' => [
                     'type' => $query['where'] === '' ? 'full_scan' : 'filtered_scan',
-                    'estimated_rows' => count($this->readSourceRows($query['from']['name'])),
-                    'uses_metadata_indexes' => $this->whereUsesIndexedColumn($query['from']['name'], $query['where']),
+                    'estimated_rows' => $estimatedRows,
+                    'estimated_result_rows' => $indexMatches === [] ? $estimatedRows : max(1, (int) ceil($estimatedRows / 3)),
+                    'uses_metadata_indexes' => $indexMatches !== [],
+                    'metadata_indexes' => $indexMatches,
                 ],
                 'where' => $query['where'],
                 'group_by' => $query['group'],
@@ -2294,30 +2298,51 @@ final class DevDbSqlTranslator
         return isset(($this->store->schema()['views'] ?? [])[$view]);
     }
 
-    private function whereUsesIndexedColumn(string $table, string $where): bool
+    private function metadataIndexMatches(string $table, string $where, string $order = ''): array
     {
-        if ($where === '') {
-            return false;
-        }
-
         $meta = $this->store->schema()['tables'][$table] ?? [];
-        $columns = [];
+        $indexes = [];
         if (!empty($meta['primary_key'])) {
-            $columns[] = (string) $meta['primary_key'];
+            $indexes[] = [
+                'name' => 'PRIMARY',
+                'type' => 'primary',
+                'columns' => [(string) $meta['primary_key']],
+            ];
         }
         foreach (($meta['indexes'] ?? []) as $index) {
-            foreach ((array) ($index['columns'] ?? []) as $column) {
-                $columns[] = (string) $column;
+            $indexes[] = [
+                'name' => (string) ($index['index'] ?? $index['name'] ?? 'index'),
+                'type' => (string) ($index['name'] ?? 'index'),
+                'columns' => array_values((array) ($index['columns'] ?? $index['column'] ?? [])),
+            ];
+        }
+
+        $matches = [];
+        $haystack = trim($where . ' ' . $order);
+        if ($haystack === '') {
+            return [];
+        }
+
+        foreach ($indexes as $index) {
+            $matchedColumns = [];
+            foreach ($index['columns'] as $column) {
+                $column = (string) $column;
+                if (preg_match('/(?:^|\W)' . preg_quote($column, '/') . '(?:\W|$)/i', $haystack) === 1) {
+                    $matchedColumns[] = $column;
+                }
+            }
+
+            if ($matchedColumns !== []) {
+                $matches[] = [
+                    'name' => $index['name'],
+                    'type' => $index['type'],
+                    'columns' => $index['columns'],
+                    'matched_columns' => $matchedColumns,
+                ];
             }
         }
 
-        foreach (array_unique($columns) as $column) {
-            if (preg_match('/(?:^|\W)' . preg_quote($column, '/') . '(?:\W|$)/i', $where) === 1) {
-                return true;
-            }
-        }
-
-        return false;
+        return $matches;
     }
 
     private function containsAggregate(string $columns): bool
