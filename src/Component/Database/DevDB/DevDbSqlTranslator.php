@@ -6,8 +6,15 @@ final class DevDbSqlTranslator
 {
     private const DEFAULT_VALUE = '__DEVDB_DEFAULT_VALUE__';
 
+    private ?int $lastInsertId = null;
+
     public function __construct(private DevDbStore $store, private bool $strict = true)
     {
+    }
+
+    public function lastInsertId(): ?int
+    {
+        return $this->lastInsertId;
     }
 
     /**
@@ -243,6 +250,10 @@ final class DevDbSqlTranslator
                 $this->bumpSequence($table, (int) $row[$primaryKey]);
             }
 
+            if ($primaryKey !== null && is_numeric($row[$primaryKey] ?? null)) {
+                $this->lastInsertId = (int) $row[$primaryKey];
+            }
+
             $row = $this->applyColumnDefaults($table, $row);
             $this->guardColumnConstraints($table, $row);
             $this->guardUniqueConstraints($table, $row, $rows);
@@ -278,6 +289,10 @@ final class DevDbSqlTranslator
                 $row[$primaryKey] = $this->store->nextId($table);
             } elseif ($primaryKey !== null && is_numeric($row[$primaryKey] ?? null)) {
                 $this->bumpSequence($table, (int) $row[$primaryKey]);
+            }
+
+            if ($primaryKey !== null && is_numeric($row[$primaryKey] ?? null)) {
+                $this->lastInsertId = (int) $row[$primaryKey];
             }
 
             $row = $this->applyColumnDefaults($table, $row);

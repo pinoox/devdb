@@ -64,6 +64,11 @@ final class DevDatabase
         return $this->sql->execute($sql, $bindings);
     }
 
+    public function lastInsertId(): ?int
+    {
+        return $this->sql->lastInsertId();
+    }
+
     /**
      * Execute a multi-statement SQL dump. Statements that are known MySQL
      * compatibility commands are accepted as no-ops.
@@ -99,6 +104,27 @@ final class DevDatabase
     public function clear(): void
     {
         $this->store->clear();
+    }
+
+    public function beginTransaction(): bool
+    {
+        $this->store->beginTransaction();
+
+        return true;
+    }
+
+    public function commit(): bool
+    {
+        $this->store->commitTransaction();
+
+        return true;
+    }
+
+    public function rollBack(): bool
+    {
+        $this->store->rollbackTransaction();
+
+        return true;
     }
 
     public function snapshot(?string $name = null): array

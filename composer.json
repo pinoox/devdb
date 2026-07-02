@@ -25,6 +25,7 @@
   "autoload": {
     "classmap": [
       "src/DevDatabase.php",
+      "src/Compat",
       "src/Component/Database/Connections/DevDbConnection.php",
       "src/Component/Database/DevDB",
       "src/Terminal/DevDB"

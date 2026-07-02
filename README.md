@@ -36,6 +36,7 @@ The short version: DevDB removes setup friction during development. Use it to st
 - [Features](#features)
 - [Installation](#installation)
 - [Normal PHP Usage](#normal-php-usage)
+- [PDO and mysqli-like Adapters](#pdo-and-mysqli-like-adapters)
 - [Using DevDB in Pinoox](#using-devdb-in-pinoox)
 - [Using DevDB in Laravel](#using-devdb-in-laravel)
 - [Storage Format](#storage-format)
@@ -65,6 +66,7 @@ The short version: DevDB removes setup friction during development. Use it to st
 - Multi-statement SQL dump execution for common MySQL exports.
 - Lightweight `EXPLAIN` output for debugging translated queries.
 - Strict development checks for `NOT NULL`, `ENUM`, `UNIQUE`, and simple foreign keys.
+- PDO-like and mysqli-like adapters for plain PHP projects.
 - SQL functions such as `DATE`, `LOWER`, `COALESCE`, `CONCAT`, `ROUND`, and more.
 - A standalone PHP API through `Pinoox\DevDB\DevDatabase`.
 - A Laravel-compatible connection class through `Pinoox\Component\Database\Connections\DevDbConnection`.
@@ -124,6 +126,55 @@ $latest = $db->selectOne(
     'select * from notes order by id desc limit 1',
 );
 ```
+
+## PDO and mysqli-like Adapters
+
+DevDB cannot replace PHP's built-in `PDO` or `mysqli` extensions transparently. Those extensions talk to real database drivers. For plain PHP projects, DevDB provides lightweight compatibility adapters with familiar method names.
+
+### PDO-like usage
+
+```php
+<?php
+
+require __DIR__ . '/vendor/autoload.php';
+
+use Pinoox\DevDB\Compat\DevPDO;
+
+$pdo = DevPDO::open(__DIR__ . '/storage/devdb');
+
+$pdo->exec('create table users (id integer primary key auto_increment, name varchar(80))');
+$pdo->exec("insert into users (name) values ('Ava')");
+
+$stmt = $pdo->prepare('select * from users where name = :name');
+$stmt->execute(['name' => 'Ava']);
+
+$users = $stmt->fetchAll(DevPDO::FETCH_ASSOC);
+$id = $pdo->lastInsertId();
+```
+
+Supported common methods include `query()`, `exec()`, `prepare()`, `execute()`, `bindValue()`, `fetch()`, `fetchAll()`, `fetchColumn()`, `rowCount()`, `lastInsertId()`, `beginTransaction()`, `commit()`, and `rollBack()`.
+
+### mysqli-like usage
+
+```php
+<?php
+
+require __DIR__ . '/vendor/autoload.php';
+
+use Pinoox\DevDB\Compat\DevMysqli;
+
+$db = DevMysqli::open(__DIR__ . '/storage/devdb');
+
+$db->query('create table posts (id integer primary key auto_increment, title varchar(120))');
+$db->query("insert into posts (title) values ('Hello')");
+
+$result = $db->query('select * from posts');
+$post = $result->fetch_assoc();
+
+$id = $db->insert_id;
+```
+
+Supported common methods and properties include `query()`, `fetch_assoc()`, `fetch_object()`, `fetch_array()`, `fetch_all()`, `num_rows`, `affected_rows`, `insert_id`, `real_escape_string()`, `begin_transaction()`, `commit()`, and `rollback()`.
 
 ## Using DevDB in Pinoox
 
