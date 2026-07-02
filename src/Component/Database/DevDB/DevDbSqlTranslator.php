@@ -4,8 +4,58 @@ namespace Pinoox\Component\Database\DevDB;
 
 final class DevDbSqlTranslator
 {
-    public function __construct(private DevDbStore $store)
+    private const DEFAULT_VALUE = '__DEVDB_DEFAULT_VALUE__';
+
+    public function __construct(private DevDbStore $store, private bool $strict = true)
     {
+    }
+
+    /**
+     * @return list<array{statement:string,affected:int}>
+     */
+    public function executeDump(string $sql): array
+    {
+        $results = [];
+
+        foreach ($this->splitStatements($sql) as $statement) {
+            $results[] = [
+                'statement' => $statement,
+                'affected' => $this->execute($statement),
+            ];
+        }
+
+        return $results;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    public function explain(string $sql): array
+    {
+        $normalized = $this->normalizeSql($sql);
+
+        if (preg_match('/^select\s+/i', $normalized) === 1) {
+            $query = $this->parseSelect($normalized);
+
+            return [
+                'type' => 'select',
+                'table' => $query['from']['name'],
+                'alias' => $query['from']['alias'],
+                'joins' => $query['joins'],
+                'where' => $query['where'],
+                'group_by' => $query['group'],
+                'having' => $query['having'],
+                'order_by' => $query['order'],
+                'limit' => $query['limit'],
+                'offset' => $query['offset'],
+            ];
+        }
+
+        return [
+            'type' => strtolower($this->statementName($normalized)),
+            'statement' => $normalized,
+            'supported' => $this->isSupportedStatement($normalized),
+        ];
     }
 
     /**
@@ -14,6 +64,10 @@ final class DevDbSqlTranslator
     public function select(string $sql, array $bindings = []): array
     {
         $sql = $this->normalizeSql($sql);
+
+        if (preg_match('/^explain\s+(?<sql>select\s+.+)$/is', $sql, $match) === 1) {
+            return [(object) $this->explain($match['sql'])];
+        }
 
         if (preg_match('/^show\s+databases$/i', $sql) === 1) {
             return [(object) ['Database' => 'devdb', 'database' => 'devdb']];
@@ -172,7 +226,9 @@ final class DevDbSqlTranslator
             }
 
             $row = $this->applyColumnDefaults($table, $row);
+            $this->guardColumnConstraints($table, $row);
             $this->guardUniqueConstraints($table, $row, $rows);
+            $this->guardForeignKeyConstraints($table, $row);
             $rows[] = $row;
             $affected++;
         }
@@ -207,7 +263,9 @@ final class DevDbSqlTranslator
             }
 
             $row = $this->applyColumnDefaults($table, $row);
+            $this->guardColumnConstraints($table, $row);
             $this->guardUniqueConstraints($table, $row, $rows);
+            $this->guardForeignKeyConstraints($table, $row);
             $rows[] = $row;
             $affected++;
         }
@@ -240,7 +298,9 @@ final class DevDbSqlTranslator
             $updatedRow = array_replace((array) $row, $assignments);
             $otherRows = $rows;
             unset($otherRows[$index]);
+            $this->guardColumnConstraints($table, $updatedRow);
             $this->guardUniqueConstraints($table, $updatedRow, $otherRows);
+            $this->guardForeignKeyConstraints($table, $updatedRow);
             $rows[$index] = $updatedRow;
             $affected++;
         }
@@ -859,6 +919,7 @@ final class DevDbSqlTranslator
 
         return match (strtolower($value)) {
             'null' => null,
+            'default' => self::DEFAULT_VALUE,
             'true' => true,
             'false' => false,
             default => is_numeric($value) ? ($value + 0) : $this->cleanIdentifier($value, false),
@@ -959,6 +1020,20 @@ final class DevDbSqlTranslator
 
             if (preg_match('/^(?:unique\s+(?:key|index)?|index|key)\s*(?<name>[`"\[\]A-Za-z0-9_.-]+)?\s*\((?<columns>[^)]+)\)(?:\s+using\s+\w+)?$/i', $definition, $match) === 1) {
                 $indexes[] = $this->indexDefinition($definition, $match['columns'], $match['name'] ?? null);
+                continue;
+            }
+
+            if (preg_match('/^(?:constraint\s+(?<name>[`"\[\]A-Za-z0-9_.-]+)\s+)?foreign\s+key\s*\((?<columns>[^)]+)\)\s+references\s+(?<table>[`"\[\]A-Za-z0-9_.-]+)\s*\((?<references>[^)]+)\)(?<actions>.*)$/i', $definition, $match) === 1) {
+                $actions = strtolower((string) ($match['actions'] ?? ''));
+                $indexes[] = [
+                    'name' => 'foreign',
+                    'index' => isset($match['name']) && $match['name'] !== '' ? $this->cleanIdentifier($match['name']) : implode('_', array_map(fn (string $column): string => $this->cleanIdentifier($column), $this->splitCsv($match['columns']))) . '_foreign',
+                    'columns' => array_map(fn (string $column): string => $this->cleanIdentifier($column), $this->splitCsv($match['columns'])),
+                    'references_table' => $this->cleanIdentifier($match['table']),
+                    'references_columns' => array_map(fn (string $column): string => $this->cleanIdentifier($column), $this->splitCsv($match['references'])),
+                    'on_delete' => preg_match('/on\s+delete\s+(cascade|set\s+null|restrict|no\s+action)/i', $actions, $deleteMatch) === 1 ? strtoupper($deleteMatch[1]) : null,
+                    'on_update' => preg_match('/on\s+update\s+(cascade|set\s+null|restrict|no\s+action)/i', $actions, $updateMatch) === 1 ? strtoupper($updateMatch[1]) : null,
+                ];
                 continue;
             }
 
@@ -1067,18 +1142,53 @@ final class DevDbSqlTranslator
         $columns = $this->store->schema()['tables'][$table]['columns'] ?? [];
 
         foreach ($columns as $name => $column) {
-            if (array_key_exists($name, $row)) {
+            if (array_key_exists($name, $row) && $row[$name] !== self::DEFAULT_VALUE) {
                 continue;
             }
 
-            $row[$name] = array_key_exists('default', $column) ? $column['default'] : null;
+            $default = array_key_exists('default', $column) ? $column['default'] : null;
+            if (is_string($default) && preg_match('/^current_(timestamp|date|time)$/i', $default) === 1) {
+                $default = match (strtolower($default)) {
+                    'current_date' => date('Y-m-d'),
+                    'current_time' => date('H:i:s'),
+                    default => date('Y-m-d H:i:s'),
+                };
+            }
+
+            $row[$name] = $default;
         }
 
         return $row;
     }
 
+    private function guardColumnConstraints(string $table, array $row): void
+    {
+        if (!$this->strict) {
+            return;
+        }
+
+        $columns = $this->store->schema()['tables'][$table]['columns'] ?? [];
+        foreach ($columns as $name => $column) {
+            $value = $row[(string) $name] ?? null;
+
+            if (($value === null || $value === '') && empty($column['nullable']) && empty($column['auto_increment'])) {
+                throw new DevDbException('DevDB NOT NULL constraint violation on "' . $table . '.' . (string) $name . '".');
+            }
+
+            if ($value !== null && ($column['type'] ?? null) === 'enum' && isset($column['values']) && is_array($column['values'])) {
+                if (!in_array($value, $column['values'], true)) {
+                    throw new DevDbException('DevDB ENUM constraint violation on "' . $table . '.' . (string) $name . '".');
+                }
+            }
+        }
+    }
+
     private function guardUniqueConstraints(string $table, array $candidate, array $existingRows): void
     {
+        if (!$this->strict) {
+            return;
+        }
+
         $schema = $this->store->schema();
         $meta = $schema['tables'][$table] ?? [];
         $uniqueIndexes = [];
@@ -1103,6 +1213,11 @@ final class DevDbSqlTranslator
                 continue;
             }
 
+            $candidateValues = array_map(fn (string $column): mixed => $candidate[$column] ?? null, $columns);
+            if (in_array(null, $candidateValues, true)) {
+                continue;
+            }
+
             foreach ($existingRows as $row) {
                 $matches = true;
                 foreach ($columns as $column) {
@@ -1116,6 +1231,55 @@ final class DevDbSqlTranslator
                 if ($matches) {
                     throw new DevDbException('DevDB unique constraint violation on "' . (string) ($index['index'] ?? $index['name'] ?? implode('_', $columns)) . '".');
                 }
+            }
+        }
+    }
+
+    private function guardForeignKeyConstraints(string $table, array $candidate): void
+    {
+        if (!$this->strict) {
+            return;
+        }
+
+        $schema = $this->store->schema();
+        $meta = $schema['tables'][$table] ?? [];
+
+        foreach (($meta['indexes'] ?? []) as $index) {
+            if (($index['name'] ?? null) !== 'foreign') {
+                continue;
+            }
+
+            $columns = array_values((array) ($index['columns'] ?? []));
+            $referenceTable = (string) ($index['references_table'] ?? '');
+            $referenceColumns = array_values((array) ($index['references_columns'] ?? []));
+
+            if ($columns === [] || $referenceTable === '' || $referenceColumns === [] || !$this->store->hasTable($referenceTable)) {
+                continue;
+            }
+
+            $localValues = array_map(fn (string $column): mixed => $candidate[$column] ?? null, $columns);
+            if (in_array(null, $localValues, true)) {
+                continue;
+            }
+
+            $exists = false;
+            foreach ($this->store->readTable($referenceTable) as $row) {
+                $matches = true;
+                foreach ($referenceColumns as $offset => $referenceColumn) {
+                    if (($row[(string) $referenceColumn] ?? null) !== ($localValues[$offset] ?? null)) {
+                        $matches = false;
+                        break;
+                    }
+                }
+
+                if ($matches) {
+                    $exists = true;
+                    break;
+                }
+            }
+
+            if (!$exists) {
+                throw new DevDbException('DevDB foreign key constraint violation on "' . $table . '.' . implode(',', $columns) . '".');
             }
         }
     }
@@ -1652,6 +1816,63 @@ final class DevDbSqlTranslator
         }
 
         return $result === [] ? $row : $result;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function splitStatements(string $sql): array
+    {
+        $sql = preg_replace('/^\s*--.*$/m', '', $sql) ?? $sql;
+        $sql = preg_replace('/^\s*#.*$/m', '', $sql) ?? $sql;
+        $sql = preg_replace('/\/\*![0-9]+\s*(.*?)\*\//s', '$1', $sql) ?? $sql;
+        $sql = preg_replace('/\/\*.*?\*\//s', '', $sql) ?? $sql;
+
+        $statements = [];
+        $buffer = '';
+        $quote = null;
+        $length = strlen($sql);
+
+        for ($i = 0; $i < $length; $i++) {
+            $char = $sql[$i];
+
+            if ($quote !== null) {
+                $buffer .= $char;
+                if ($char === $quote && ($i === 0 || $sql[$i - 1] !== '\\')) {
+                    $quote = null;
+                }
+                continue;
+            }
+
+            if ($char === "'" || $char === '"') {
+                $quote = $char;
+                $buffer .= $char;
+                continue;
+            }
+
+            if ($char === ';') {
+                $statement = $this->normalizeSql($buffer);
+                if ($statement !== '') {
+                    $statements[] = $statement;
+                }
+                $buffer = '';
+                continue;
+            }
+
+            $buffer .= $char;
+        }
+
+        $statement = $this->normalizeSql($buffer);
+        if ($statement !== '') {
+            $statements[] = $statement;
+        }
+
+        return $statements;
+    }
+
+    private function isSupportedStatement(string $sql): bool
+    {
+        return preg_match('/^(select|show|describe|desc|explain|insert|update|delete|set|create|drop|use|alter|truncate)\b/i', $sql) === 1;
     }
 
     private function normalizeSql(string $sql): string

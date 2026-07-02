@@ -16,11 +16,14 @@ class DevDbConnection extends Connection
 {
     private DevDbStore $store;
 
+    private bool $strict = true;
+
     public function __construct($pdo, $database = '', $tablePrefix = '', array $config = [])
     {
         parent::__construct(null, $database ?: 'devdb', $tablePrefix, $config);
 
         $this->store = new DevDbStore($config['path'] ?? null);
+        $this->strict = (bool) ($config['strict'] ?? true);
         $this->useDefaultQueryGrammar();
         $this->useDefaultPostProcessor();
         $this->useDefaultSchemaGrammar();
@@ -94,7 +97,9 @@ class DevDbConnection extends Connection
 
     public function unprepared($query)
     {
-        return $this->statement($query);
+        $this->sqlTranslator()->executeDump((string) $query);
+
+        return true;
     }
 
     public function beginTransaction()
@@ -134,6 +139,6 @@ class DevDbConnection extends Connection
 
     private function sqlTranslator(): DevDbSqlTranslator
     {
-        return new DevDbSqlTranslator($this->store);
+        return new DevDbSqlTranslator($this->store, $this->strict);
     }
 }

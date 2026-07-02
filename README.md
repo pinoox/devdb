@@ -39,6 +39,7 @@ The short version: DevDB removes setup friction during development. Use it to st
 - [Using DevDB in Pinoox](#using-devdb-in-pinoox)
 - [Using DevDB in Laravel](#using-devdb-in-laravel)
 - [Storage Format](#storage-format)
+- [Compatibility Matrix](#compatibility-matrix)
 - [Raw SQL Support](#raw-sql-support)
 - [Schema SQL Support](#schema-sql-support)
 - [Snapshots and Change Manifests](#snapshots-and-change-manifests)
@@ -61,6 +62,9 @@ The short version: DevDB removes setup friction during development. Use it to st
 - Change manifests for detecting external JSON file changes.
 - Common CRUD query support.
 - Raw SQL translator for common `SELECT`, `INSERT`, `UPDATE`, `DELETE`, and `TRUNCATE` statements.
+- Multi-statement SQL dump execution for common MySQL exports.
+- Lightweight `EXPLAIN` output for debugging translated queries.
+- Strict development checks for `NOT NULL`, `ENUM`, `UNIQUE`, and simple foreign keys.
 - SQL functions such as `DATE`, `LOWER`, `COALESCE`, `CONCAT`, `ROUND`, and more.
 - A standalone PHP API through `Pinoox\DevDB\DevDatabase`.
 - A Laravel-compatible connection class through `Pinoox\Component\Database\Connections\DevDbConnection`.
@@ -70,31 +74,6 @@ The short version: DevDB removes setup friction during development. Use it to st
 
 ```bash
 composer require --dev pinoox/devdb
-```
-
-For monorepo or local package development, use a Composer path repository:
-
-```json
-{
-  "repositories": [
-    {
-      "type": "path",
-      "url": "../devdb",
-      "options": {
-        "symlink": true
-      }
-    }
-  ],
-  "require-dev": {
-    "pinoox/devdb": "*"
-  }
-}
-```
-
-Then update the package:
-
-```bash
-composer update pinoox/devdb
 ```
 
 ## Normal PHP Usage
@@ -270,6 +249,24 @@ storage/devdb/meta/indexes.json
 
 `schema.json` describes tables and columns. Each table has a JSON data file under `data/`. Auto-increment values are stored in `meta/sequences.json`.
 
+## Compatibility Matrix
+
+DevDB aims to cover the SQL and query behavior developers commonly hit while building local apps, tests, examples, and demos. It is intentionally conservative: unsupported features fail with a clear `DevDbException` instead of silently pretending to be a full database server.
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| CRUD query builder | Supported | `insert`, `update`, `delete`, `first`, `get`, `count`, `exists`, pagination-style limits |
+| Raw `SELECT` | Supported | aliases, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `LIMIT`, `OFFSET`, `DISTINCT` |
+| Joins | Partial | inner and left joins with simple equality conditions |
+| Aggregates | Supported | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` |
+| SQL functions | Partial | common scalar/date/string/math functions used in development queries |
+| Schema SQL | Partial | common `CREATE`, `DROP`, `ALTER`, `SHOW`, `DESCRIBE`, and index statements |
+| MySQL dump imports | Partial | common dump syntax, comments, `SET`, `AUTO_INCREMENT`, table options, and multi-statement execution |
+| Constraints | Partial | strict checks for `NOT NULL`, `ENUM`, `UNIQUE`, primary keys, and simple foreign keys |
+| Transactions | Development-safe | snapshot-backed rollback, not isolation-level database transactions |
+| Locks | No-op | accepted for compatibility where possible, not real database locks |
+| Advanced SQL | Unsupported | `UNION`, CTEs, windows, triggers, views, stored procedures, complex subqueries |
+
 ## Raw SQL Support
 
 DevDB translates common raw SQL statements into JSON operations.
@@ -284,6 +281,7 @@ Supported data statements:
 - `UPDATE`
 - `DELETE`
 - `TRUNCATE`
+- `EXPLAIN SELECT ...`
 
 Supported `SELECT` features:
 
@@ -321,6 +319,12 @@ Supported operators and predicates:
 - `NOT`
 - `EXISTS`
 - `NOT EXISTS`
+
+Supported development helpers:
+
+- `executeDump()` for multi-statement SQL imports
+- `explain()` for inspecting how DevDB understands a query
+- strict constraint validation, enabled by default
 - parenthesized boolean groups
 
 Supported aggregate functions:
@@ -393,6 +397,8 @@ DevDB also accepts common MySQL dump compatibility syntax such as:
 
 - `SET NAMES utf8mb4`
 - `SET FOREIGN_KEY_CHECKS = 0`
+- SQL comments in dump files
+- multiple semicolon-separated statements through `executeDump()`
 - backtick-quoted identifiers
 - `AUTO_INCREMENT`
 - table options after `CREATE TABLE`, such as `ENGINE`, `AUTO_INCREMENT`, `CHARACTER SET`, `COLLATE`, and `ROW_FORMAT`
@@ -403,6 +409,14 @@ DevDB also accepts common MySQL dump compatibility syntax such as:
 - `ENUM(...)`
 - `CREATE DATABASE`, `DROP DATABASE`, and `USE` as local compatibility no-op statements
 - `SHOW DATABASES`
+
+In strict mode, DevDB validates common development constraints while inserting or updating rows:
+
+- `NOT NULL`
+- `ENUM(...)`
+- primary keys
+- unique indexes
+- simple foreign keys where the referenced table exists
 
 Supported schema statements:
 
@@ -529,6 +543,30 @@ $db->statement('insert into users (name, email) values (?, ?)', ['Ava', 'ava@exa
 $affected = $db->execute('update users set name = ? where id = ?', ['Ava Dev', 1]);
 ```
 
+### `executeDump()`
+
+```php
+$db->executeDump(file_get_contents(__DIR__ . '/database/schema.sql'));
+```
+
+`executeDump()` splits and executes multi-statement SQL dumps. It ignores common SQL comments and accepts compatibility statements such as `SET NAMES utf8mb4`, `SET FOREIGN_KEY_CHECKS = 0`, `CREATE DATABASE`, `DROP DATABASE`, and `USE` as local no-op operations.
+
+### `explain()`
+
+```php
+$plan = $db->explain('select p.id from posts as p where p.status = "published"');
+```
+
+`explain()` returns a small debug plan with the parsed table, alias, joins, filters, ordering, and limits. It is useful when a raw query does not behave the way you expected.
+
+### `strict()`
+
+```php
+$db->strict(false)->executeDump($legacyDump);
+```
+
+Strict mode is enabled by default. It validates `NOT NULL`, `ENUM`, `UNIQUE`, primary key, and simple foreign key constraints. Disable it only for loose development imports where you prefer loading imperfect fixture data over failing fast.
+
 ### `store()`
 
 ```php
@@ -639,10 +677,11 @@ DevDB is intentionally not a full SQL server.
 Unsupported or limited features include:
 
 - `UNION`
-- subqueries
+- broad subquery support beyond simple `EXISTS`
 - recursive queries
 - complex multi-condition join clauses
 - vendor-specific SQL functions
+- full foreign key cascade behavior
 - stored procedures
 - triggers
 - views

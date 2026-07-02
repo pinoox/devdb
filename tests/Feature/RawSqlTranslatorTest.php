@@ -163,6 +163,39 @@ SQL);
         ->and(array_map(fn ($index) => $index->Key_name, $indexes))->toContain('discounts_code_unique', 'discounts_code_is_active_index');
 });
 
+it('enforces strict column, unique, and foreign key constraints', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_constraints'));
+    $db->executeDump(<<<'SQL'
+CREATE TABLE users (
+  id integer NOT NULL AUTO_INCREMENT,
+  email varchar(120) NULL DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE INDEX users_email_unique (email)
+);
+CREATE TABLE posts (
+  id integer NOT NULL AUTO_INCREMENT,
+  user_id integer NOT NULL,
+  status enum('draft','published') NOT NULL DEFAULT 'draft',
+  PRIMARY KEY (id),
+  CONSTRAINT posts_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+SQL);
+
+    $db->statement('insert into users (email) values (NULL), (NULL), (?)', ['ava@example.com']);
+    $db->statement('insert into posts (user_id, status) values (?, DEFAULT)', [1]);
+
+    expect($db->selectOne('select count(*) as aggregate from users')->aggregate)->toBe(3)
+        ->and($db->selectOne('select status from posts')->status)->toBe('draft')
+        ->and(fn () => $db->statement('insert into users (email) values (?)', ['ava@example.com']))
+        ->toThrow(DevDbException::class, 'unique constraint')
+        ->and(fn () => $db->statement('insert into posts (user_id, status) values (?, ?)', [999, 'draft']))
+        ->toThrow(DevDbException::class, 'foreign key constraint')
+        ->and(fn () => $db->statement('insert into posts (user_id, status) values (?, ?)', [1, 'archived']))
+        ->toThrow(DevDbException::class, 'ENUM constraint')
+        ->and(fn () => $db->statement('insert into posts (status) values (?)', ['draft']))
+        ->toThrow(DevDbException::class, 'NOT NULL constraint');
+});
+
 it('throws useful errors for unsupported or invalid raw SQL', function () {
     $db = DevDatabase::open(devdb_test_path('raw_errors'));
     $db->statement('create table posts (id integer primary key, title varchar(120))');

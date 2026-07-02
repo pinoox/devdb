@@ -11,10 +11,12 @@ final class DevDatabase
 
     private DevDbSqlTranslator $sql;
 
+    private bool $strict = true;
+
     public function __construct(?string $path = null)
     {
         $this->store = new DevDbStore($path);
-        $this->sql = new DevDbSqlTranslator($this->store);
+        $this->sql = new DevDbSqlTranslator($this->store, $this->strict);
     }
 
     public static function open(?string $path = null): self
@@ -60,6 +62,31 @@ final class DevDatabase
     public function execute(string $sql, array $bindings = []): int
     {
         return $this->sql->execute($sql, $bindings);
+    }
+
+    /**
+     * Execute a multi-statement SQL dump. Statements that are known MySQL
+     * compatibility commands are accepted as no-ops.
+     */
+    public function executeDump(string $sql): array
+    {
+        return $this->sql->executeDump($sql);
+    }
+
+    /**
+     * Return a small debug plan that explains how DevDB understands a query.
+     */
+    public function explain(string $sql): array
+    {
+        return $this->sql->explain($sql);
+    }
+
+    public function strict(bool $enabled = true): self
+    {
+        $this->strict = $enabled;
+        $this->sql = new DevDbSqlTranslator($this->store, $this->strict);
+
+        return $this;
     }
 
     public function statement(string $sql, array $bindings = []): bool

@@ -76,3 +76,48 @@ it('exposes snapshots and change manifests through the standalone API', function
 
     devdb_remove_path($path);
 });
+
+it('executes multi-statement SQL dumps and explains select queries', function () {
+    $path = devdb_test_path('standalone_dump_explain');
+    $db = DevDatabase::open($path);
+
+    $results = $db->executeDump(<<<'SQL'
+-- DevDB should ignore comments and accept MySQL compatibility statements.
+SET NAMES utf8mb4;
+DROP TABLE IF EXISTS `pages`;
+CREATE TABLE `pages` (
+  `page_id` int NOT NULL AUTO_INCREMENT,
+  `title` varchar(120) NOT NULL,
+  `status` enum('draft','published') NOT NULL DEFAULT 'draft',
+  PRIMARY KEY (`page_id`)
+) ENGINE = InnoDB AUTO_INCREMENT = 10 DEFAULT CHARSET = utf8mb4;
+INSERT INTO `pages` (`title`, `status`) VALUES ('Home', 'published'), ('Draft', DEFAULT);
+SQL);
+
+    $plan = $db->explain("select p.page_id from pages as p where p.status = 'published' order by p.page_id");
+    $rows = $db->select('select p.page_id, p.status from pages as p where p.page_id >= ? order by p.page_id', [10]);
+
+    expect($results)->toHaveCount(4)
+        ->and($plan['type'])->toBe('select')
+        ->and($plan['table'])->toBe('pages')
+        ->and($plan['alias'])->toBe('p')
+        ->and(array_map(fn ($row) => $row->page_id, $rows))->toBe([10, 11])
+        ->and($rows[1]->status)->toBe('draft');
+
+    devdb_remove_path($path);
+});
+
+it('can relax strict constraints for loose development imports', function () {
+    $path = devdb_test_path('standalone_loose_imports');
+    $db = DevDatabase::open($path);
+    $db->statement("create table posts (id integer primary key auto_increment, status enum('draft','published') not null)");
+
+    expect(fn () => $db->statement("insert into posts (status) values ('archived')"))
+        ->toThrow(\Pinoox\Component\Database\DevDB\DevDbException::class, 'ENUM constraint');
+
+    $db->strict(false)->statement("insert into posts (status) values ('archived')");
+
+    expect($db->selectOne('select status from posts')->status)->toBe('archived');
+
+    devdb_remove_path($path);
+});
