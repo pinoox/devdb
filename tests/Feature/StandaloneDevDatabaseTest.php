@@ -101,6 +101,7 @@ SQL);
         ->and($plan['type'])->toBe('select')
         ->and($plan['table'])->toBe('pages')
         ->and($plan['alias'])->toBe('p')
+        ->and($plan['scan']['estimated_rows'])->toBe(2)
         ->and(array_map(fn ($row) => $row->page_id, $rows))->toBe([10, 11])
         ->and($rows[1]->status)->toBe('draft');
 

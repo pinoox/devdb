@@ -18,7 +18,8 @@ class DevDbClearCommand extends Terminal
 
     protected function configure(): void
     {
-        $this->addOption('force', null, InputOption::VALUE_NONE, 'Clear without confirmation');
+        $this->addOption('force', null, InputOption::VALUE_NONE, 'Clear without confirmation')
+            ->addOption('no-snapshot', null, InputOption::VALUE_NONE, 'Do not create a snapshot before clearing');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -30,6 +31,10 @@ class DevDbClearCommand extends Terminal
             $io->warning('Cancelled.');
 
             return Command::SUCCESS;
+        }
+
+        if (!$input->getOption('no-snapshot')) {
+            $this->store()->snapshot('before-clear-' . date('Ymd_His'));
         }
 
         $this->runtime()->clear();

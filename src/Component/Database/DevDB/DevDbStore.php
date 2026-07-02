@@ -356,7 +356,7 @@ final class DevDbStore
         return $this->readJson($this->root . '/meta/migrations.json', []);
     }
 
-    public function recordMigration(string $package, string $migration, int $batch): void
+    public function recordMigration(string $package, string $migration, int $batch, ?string $checksum = null): void
     {
         $records = $this->migrations();
         foreach ($records as $record) {
@@ -369,9 +369,24 @@ final class DevDbStore
             'package' => $package,
             'migration' => $migration,
             'batch' => $batch,
+            'checksum' => $checksum ?? sha1($package . ':' . $migration),
+            'executed_at' => date(DATE_ATOM),
             'created_at' => date(DATE_ATOM),
         ];
         $this->writeJson($this->root . '/meta/migrations.json', $records);
+    }
+
+    public function migrationStatus(): array
+    {
+        $records = $this->migrations();
+
+        usort($records, static fn (array $a, array $b): int => [$a['batch'] ?? 0, $a['migration'] ?? ''] <=> [$b['batch'] ?? 0, $b['migration'] ?? '']);
+
+        return [
+            'count' => count($records),
+            'last_batch' => $records === [] ? 0 : max(array_map(static fn (array $record): int => (int) ($record['batch'] ?? 0), $records)),
+            'records' => $records,
+        ];
     }
 
     private function dataPath(string $table): string

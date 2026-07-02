@@ -21,7 +21,8 @@ class DevDbImportMySqlCommand extends Terminal
     protected function configure(): void
     {
         $this->addArgument('file', InputArgument::REQUIRED, 'Input SQL dump file')
-            ->addOption('loose', null, InputOption::VALUE_NONE, 'Disable strict constraint checks during import');
+            ->addOption('loose', null, InputOption::VALUE_NONE, 'Disable strict constraint checks during import')
+            ->addOption('no-snapshot', null, InputOption::VALUE_NONE, 'Do not create a snapshot before import');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -40,6 +41,9 @@ class DevDbImportMySqlCommand extends Terminal
             $db = DevDatabase::open($this->runtime()->path());
             if ($input->getOption('loose')) {
                 $db->strict(false);
+            }
+            if (!$input->getOption('no-snapshot')) {
+                $db->snapshot('before-mysql-import-' . date('Ymd_His'));
             }
 
             $results = $db->executeDump((string) file_get_contents($file));

@@ -49,6 +49,11 @@ final class DevDbSqlTranslator
                 'table' => $query['from']['name'],
                 'alias' => $query['from']['alias'],
                 'joins' => $query['joins'],
+                'scan' => [
+                    'type' => $query['where'] === '' ? 'full_scan' : 'filtered_scan',
+                    'estimated_rows' => count($this->readSourceRows($query['from']['name'])),
+                    'uses_metadata_indexes' => $this->whereUsesIndexedColumn($query['from']['name'], $query['where']),
+                ],
                 'where' => $query['where'],
                 'group_by' => $query['group'],
                 'having' => $query['having'],
@@ -1937,6 +1942,32 @@ final class DevDbSqlTranslator
         return isset(($this->store->schema()['views'] ?? [])[$view]);
     }
 
+    private function whereUsesIndexedColumn(string $table, string $where): bool
+    {
+        if ($where === '') {
+            return false;
+        }
+
+        $meta = $this->store->schema()['tables'][$table] ?? [];
+        $columns = [];
+        if (!empty($meta['primary_key'])) {
+            $columns[] = (string) $meta['primary_key'];
+        }
+        foreach (($meta['indexes'] ?? []) as $index) {
+            foreach ((array) ($index['columns'] ?? []) as $column) {
+                $columns[] = (string) $column;
+            }
+        }
+
+        foreach (array_unique($columns) as $column) {
+            if (preg_match('/(?:^|\W)' . preg_quote($column, '/') . '(?:\W|$)/i', $where) === 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function containsAggregate(string $columns): bool
     {
         return preg_match('/\b(count|sum|avg|min|max)\s*\(/i', $columns) === 1;
@@ -2227,6 +2258,7 @@ final class DevDbSqlTranslator
     {
         $sql = preg_replace('/^\s*--.*$/m', '', $sql) ?? $sql;
         $sql = preg_replace('/^\s*#.*$/m', '', $sql) ?? $sql;
+        $sql = preg_replace('/^\s*delimiter\s+\S+\s*$/im', '', $sql) ?? $sql;
         $sql = preg_replace('/\/\*![0-9]+\s*(.*?)\*\//s', '$1', $sql) ?? $sql;
         $sql = preg_replace('/\/\*.*?\*\//s', '', $sql) ?? $sql;
 

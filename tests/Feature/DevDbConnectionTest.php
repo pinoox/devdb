@@ -81,6 +81,32 @@ it('supports joins, grouped query builder aggregates, locks, and transactions', 
     expect($connection->table('posts')->count())->toBe(3);
 });
 
+it('adds timestamp convenience and soft deletes when matching columns exist', function () {
+    $path = devdb_test_path('connection_timestamps');
+    $connection = new DevDbConnection(null, 'devdb', '', ['path' => $path]);
+    $schema = $connection->getSchemaBuilder();
+    $schema->create('notes', function ($table) {
+        $table->increments('id');
+        $table->string('body');
+        $table->timestamp('created_at')->nullable();
+        $table->timestamp('updated_at')->nullable();
+        $table->timestamp('deleted_at')->nullable();
+    });
+
+    $id = $connection->table('notes')->insertGetId(['body' => 'Draft']);
+    $created = $connection->table('notes')->where('id', $id)->first();
+    $connection->table('notes')->where('id', $id)->update(['body' => 'Updated']);
+    $connection->table('notes')->where('id', $id)->delete();
+    $deleted = $connection->table('notes')->where('id', $id)->first();
+
+    expect($created->created_at)->not->toBeNull()
+        ->and($created->updated_at)->not->toBeNull()
+        ->and($deleted->body)->toBe('Updated')
+        ->and($deleted->deleted_at)->not->toBeNull();
+
+    devdb_remove_path($path);
+});
+
 it('handles raw SQL, information schema probes, and compatibility statements', function () {
     $connection = new DevDbConnection(null, 'devdb', '', ['path' => devdb_test_path('connection_raw')]);
     $connection->statement('create table migrations (id integer primary key auto_increment, migration varchar(190))');

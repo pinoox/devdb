@@ -61,6 +61,7 @@ The short version: DevDB removes setup friction during development. Use it to st
 
 - JSON-backed local database storage.
 - SQLite-first local storage with automatic JSON fallback.
+- Engine abstraction for SQLite and JSON storage backends.
 - No external database service required.
 - File-based schema, data, migrations, and sequence metadata.
 - File locking for JSON writes.
@@ -914,6 +915,12 @@ Use `devdb:clear` to delete the local DevDB data and metadata:
 devdb:clear
 ```
 
+By default, DevDB creates a snapshot before clearing. Disable that with:
+
+```bash
+devdb:clear --force --no-snapshot
+```
+
 Skip the confirmation prompt in scripts:
 
 ```bash
@@ -1003,18 +1010,6 @@ DevDB is optimized for local development, small demos, tests, and package exampl
 - JSON writes use file locking, but they are not a substitute for real database locks.
 - Use `devdb:sync:mysql` or `devdb:export:mysql` when you need phpMyAdmin, MySQL tooling, or exact SQL-server behavior.
 
-## Version Roadmap
-
-Suggested release path:
-
-| Version | Focus |
-| --- | --- |
-| `v0.1.0` | Initial standalone DevDB preview. |
-| `v0.2.0` | SQL compatibility, MySQL export/sync, and plain PHP adapters. |
-| `v0.3.0` | Engine abstraction, stronger SQLite integration, and import workflows. |
-| `v0.4.0` | Broader SQL compatibility and performance improvements. |
-| `v1.0.0` | Stable local-development API. |
-
 ## Limitations
 
 DevDB is intentionally not a full SQL server.
@@ -1073,6 +1068,12 @@ Run the package test suite:
 
 ```bash
 composer test
+```
+
+Run the full quality gate:
+
+```bash
+composer check
 ```
 
 Run only one layer:

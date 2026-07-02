@@ -142,3 +142,15 @@ it('throws clear errors for missing tables', function () {
 
     expect(fn () => $store->inspectTable('missing'))->toThrow(DevDbException::class, 'does not exist');
 });
+
+it('records migration checksums and reports migration status', function () {
+    $store = new DevDbStore(devdb_test_path('store_migrations'));
+    $store->recordMigration('com_example_blog', '2026_07_02_000000_create_posts', 1, 'abc123');
+
+    $status = $store->migrationStatus();
+
+    expect($status['count'])->toBe(1)
+        ->and($status['last_batch'])->toBe(1)
+        ->and($status['records'][0]['checksum'])->toBe('abc123')
+        ->and($status['records'][0]['executed_at'])->not->toBeEmpty();
+});

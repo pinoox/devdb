@@ -4,6 +4,8 @@ namespace Pinoox\Component\Database\DevDB;
 
 use Pinoox\Component\Database\DatabaseConfig;
 use Pinoox\Component\Database\DatabaseManager;
+use Pinoox\Component\Database\DevDB\Engines\DevDbEngineFactory;
+use Pinoox\Component\Database\DevDB\Engines\DevDbEngineInterface;
 use Pinoox\Support\SystemConfig;
 
 final class DevDbRuntime
@@ -13,15 +15,21 @@ final class DevDbRuntime
         return new DevDbStore($this->path());
     }
 
+    public function engineDriver(): DevDbEngineInterface
+    {
+        return (new DevDbEngineFactory())->make($this->configuredEngine(), $this->path(), $this->sqliteDatabase());
+    }
+
     public function engine(): string
+    {
+        return $this->engineDriver()->name();
+    }
+
+    public function configuredEngine(): string
     {
         $engine = strtolower(trim((string) SystemConfig::env('DEVDB_ENGINE', 'auto')));
 
-        if ($engine !== 'json' && extension_loaded('pdo_sqlite')) {
-            return 'sqlite';
-        }
-
-        return 'json';
+        return in_array($engine, ['auto', 'sqlite', 'json'], true) ? $engine : 'auto';
     }
 
     public function path(): string
@@ -43,52 +51,22 @@ final class DevDbRuntime
 
     public function status(): array
     {
-        if ($this->engine() === 'sqlite') {
-            return $this->sqliteStatus();
-        }
-
-        $status = $this->store()->status();
-        $status['engine'] = 'json';
-
-        return $status;
+        return $this->engineDriver()->status();
     }
 
     public function inspectTable(string $table, int $limit = 10): array
     {
-        if ($this->engine() === 'sqlite') {
-            return $this->sqliteInspect($table, $limit);
-        }
-
-        return $this->store()->inspectTable($table, $limit);
+        return $this->engineDriver()->inspectTable($table, $limit);
     }
 
     public function export(): array
     {
-        if ($this->engine() === 'sqlite') {
-            return $this->sqliteExport();
-        }
-
-        return $this->store()->export();
+        return $this->engineDriver()->export();
     }
 
     public function clear(): void
     {
-        if ($this->engine() === 'sqlite') {
-            $database = $this->sqliteDatabase();
-            if (is_file($database)) {
-                @unlink($database);
-                if (is_file($database)) {
-                    $pdo = $this->pdo();
-                    foreach ($this->sqliteTables($pdo) as $table) {
-                        $pdo->exec('DROP TABLE IF EXISTS "' . str_replace('"', '""', $table) . '"');
-                    }
-                }
-            }
-
-            return;
-        }
-
-        $this->store()->clear();
+        $this->engineDriver()->clear();
     }
 
     private function pdo(): \PDO

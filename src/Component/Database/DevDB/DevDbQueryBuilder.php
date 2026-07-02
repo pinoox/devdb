@@ -35,7 +35,7 @@ class DevDbQueryBuilder extends Builder
             : [$values];
 
         foreach ($records as $record) {
-            $rows[] = $record;
+            $rows[] = $this->withTimestamps($record, inserting: true);
         }
 
         $this->store()->replaceTable($this->fromTable(), $rows);
@@ -65,7 +65,7 @@ class DevDbQueryBuilder extends Builder
 
         foreach ($this->store()->readTable($table) as $row) {
             if ($this->matches($row)) {
-                $row = array_replace($row, $values);
+                $row = array_replace($row, $this->withTimestamps($values, inserting: false));
                 $updated++;
             }
 
@@ -85,10 +85,15 @@ class DevDbQueryBuilder extends Builder
 
         $deleted = 0;
         $remaining = [];
+        $softDeletes = $this->hasColumn($this->fromTable(), 'deleted_at');
 
         foreach ($this->store()->readTable($this->fromTable()) as $row) {
             if ($this->matches($row)) {
                 $deleted++;
+                if ($softDeletes) {
+                    $row['deleted_at'] = date('Y-m-d H:i:s');
+                    $remaining[] = $row;
+                }
                 continue;
             }
 
@@ -493,6 +498,27 @@ class DevDbQueryBuilder extends Builder
         }
 
         return 'id';
+    }
+
+    private function hasColumn(string $table, string $column): bool
+    {
+        return array_key_exists($column, $this->store()->schema()['tables'][$table]['columns'] ?? []);
+    }
+
+    private function withTimestamps(array $values, bool $inserting): array
+    {
+        $table = $this->fromTable();
+        $now = date('Y-m-d H:i:s');
+
+        if ($inserting && $this->hasColumn($table, 'created_at') && !array_key_exists('created_at', $values)) {
+            $values['created_at'] = $now;
+        }
+
+        if ($this->hasColumn($table, 'updated_at') && !array_key_exists('updated_at', $values)) {
+            $values['updated_at'] = $now;
+        }
+
+        return $values;
     }
 
     private function guardUnsupportedQueryShape(bool $allowAggregate = false): void

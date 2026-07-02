@@ -35,7 +35,12 @@
     "test": "pest",
     "test:unit": "pest tests/Unit",
     "test:feature": "pest tests/Feature",
-    "test:compat": "pest tests/Compatibility"
+    "test:compat": "pest tests/Compatibility",
+    "check": [
+      "@composer validate --strict",
+      "@test",
+      "@test:compat"
+    ]
   },
   "require-dev": {
     "pestphp/pest": "^2.36",
