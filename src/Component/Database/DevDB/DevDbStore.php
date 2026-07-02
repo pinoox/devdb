@@ -65,12 +65,18 @@ final class DevDbStore
     {
         $schema = $this->schema();
         $current = $schema['tables'][$table] ?? ['columns' => [], 'indexes' => []];
+        $existingColumns = $current['columns'] ?? [];
+        $addedColumns = array_diff_key($columns, $existingColumns);
         $current['columns'] = array_replace($current['columns'] ?? [], $columns);
         $current['indexes'] = $this->uniqueIndexes(array_merge($current['indexes'] ?? [], $indexes));
         $current['primary_key'] = $this->primaryKeyFromColumns($current['columns']);
         $current['updated_at'] = date(DATE_ATOM);
         $schema['tables'][$table] = $current;
         $this->saveSchema($schema);
+
+        if ($addedColumns !== []) {
+            $this->backfillAddedColumns($table, $addedColumns);
+        }
     }
 
     public function dropTable(string $table): void
@@ -93,6 +99,54 @@ final class DevDbStore
     public function replaceTable(string $table, array $rows): void
     {
         $this->writeJson($this->dataPath($table), array_values($rows));
+    }
+
+    private function backfillAddedColumns(string $table, array $columns): void
+    {
+        $rows = $this->readTable($table);
+        if ($rows === []) {
+            return;
+        }
+
+        $changed = false;
+        foreach ($rows as &$row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            foreach ($columns as $name => $column) {
+                if (array_key_exists($name, $row)) {
+                    continue;
+                }
+
+                $row[$name] = $this->defaultValueForColumn(is_array($column) ? $column : []);
+                $changed = true;
+            }
+        }
+        unset($row);
+
+        if ($changed) {
+            $this->replaceTable($table, $rows);
+        }
+    }
+
+    private function defaultValueForColumn(array $column): mixed
+    {
+        if (!array_key_exists('default', $column)) {
+            return null;
+        }
+
+        $default = $column['default'];
+        if (is_string($default)) {
+            return match (strtolower($default)) {
+                'current_timestamp' => date('Y-m-d H:i:s'),
+                'current_date' => date('Y-m-d'),
+                'current_time' => date('H:i:s'),
+                default => $default,
+            };
+        }
+
+        return $default;
     }
 
     public function pathForTable(string $table): string

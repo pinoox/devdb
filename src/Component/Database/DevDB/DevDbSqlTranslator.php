@@ -655,15 +655,16 @@ final class DevDbSqlTranslator
         if (preg_match('/^(?:add\s+)?column\s+(?<definition>.+)$/is', $action, $columnMatch) === 1
             || preg_match('/^add\s+(?<definition>(?!primary|unique|index|key|constraint).+)$/is', $action, $columnMatch) === 1) {
             [$name, $definition] = $this->parseColumnDefinition($columnMatch['definition']);
-            $columns[$name] = $definition;
-            $this->saveTableMetadata($table, $columns, $indexes);
+            $this->store->alterTable($table, [$name => $definition]);
 
             return;
         }
 
         if (preg_match('/^drop\s+column\s+(?<column>[`"\[\]A-Za-z0-9_.-]+)$/i', $action, $dropMatch) === 1) {
-            unset($columns[$this->cleanIdentifier($dropMatch['column'])]);
+            $column = $this->cleanIdentifier($dropMatch['column']);
+            unset($columns[$column]);
             $this->saveTableMetadata($table, $columns, $indexes);
+            $this->dropColumnData($table, $column);
 
             return;
         }
@@ -676,6 +677,7 @@ final class DevDbSqlTranslator
                 unset($columns[$from]);
             }
             $this->saveTableMetadata($table, $columns, $indexes);
+            $this->renameColumnData($table, $from, $to);
 
             return;
         }
@@ -1788,6 +1790,47 @@ final class DevDbSqlTranslator
             'updated_at' => date(DATE_ATOM),
         ]);
         $this->store->saveSchema($schema);
+    }
+
+    private function renameColumnData(string $table, string $from, string $to): void
+    {
+        $rows = $this->store->readTable($table);
+        $changed = false;
+
+        foreach ($rows as &$row) {
+            if (!is_array($row) || !array_key_exists($from, $row)) {
+                continue;
+            }
+
+            $row[$to] = $row[$from];
+            unset($row[$from]);
+            $changed = true;
+        }
+        unset($row);
+
+        if ($changed) {
+            $this->store->replaceTable($table, $rows);
+        }
+    }
+
+    private function dropColumnData(string $table, string $column): void
+    {
+        $rows = $this->store->readTable($table);
+        $changed = false;
+
+        foreach ($rows as &$row) {
+            if (!is_array($row) || !array_key_exists($column, $row)) {
+                continue;
+            }
+
+            unset($row[$column]);
+            $changed = true;
+        }
+        unset($row);
+
+        if ($changed) {
+            $this->store->replaceTable($table, $rows);
+        }
     }
 
     private function primaryKeyFromColumns(array $columns): ?string

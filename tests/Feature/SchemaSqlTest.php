@@ -32,12 +32,14 @@ it('accepts database-level W3Schools MySQL statements as local compatibility com
 it('supports schema mutation commands', function () {
     $db = DevDatabase::open(devdb_test_path('schema_mutation'));
     $db->statement('create table users (id integer primary key auto_increment, email varchar(190))');
+    $db->statement('insert into users (email) values (?)', ['old@example.com']);
     $db->statement('alter table users add column status varchar(20) default "active"');
     $db->statement('alter table users rename column status to state');
     $db->statement('alter table users add index users_state_index (state)');
 
     expect(array_map(fn ($column) => $column->Field, $db->select('desc users')))->toBe(['id', 'email', 'state'])
-        ->and(array_map(fn ($index) => $index->Key_name, $db->select('show keys from users')))->toContain('users_state_index');
+        ->and(array_map(fn ($index) => $index->Key_name, $db->select('show keys from users')))->toContain('users_state_index')
+        ->and($db->selectOne('select state from users where email = ?', ['old@example.com'])->state)->toBe('active');
 
     $db->statement('alter table users drop column state');
     $db->statement('drop index users_state_index on users');
@@ -47,6 +49,20 @@ it('supports schema mutation commands', function () {
 
     expect($db->execute('drop table if exists users'))->toBe(1)
         ->and($db->select('show tables'))->toBe([]);
+});
+
+it('backfills existing rows when adding a defaulted column', function () {
+    $db = DevDatabase::open(devdb_test_path('schema_add_column_default_backfill'));
+    $db->statement('create table posts (id integer primary key auto_increment, title varchar(120))');
+    $db->statement('insert into posts (title) values (?)', ['Before migration']);
+
+    $db->statement('alter table posts add column status varchar(20) not null default "draft"');
+    $db->statement('insert into posts (title) values (?)', ['After migration']);
+
+    $rows = $db->select('select id, title, status from posts order by id');
+
+    expect($rows[0]->status)->toBe('draft')
+        ->and($rows[1]->status)->toBe('draft');
 });
 
 it('renames tables while preserving rows and metadata', function () {
