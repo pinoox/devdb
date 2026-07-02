@@ -730,6 +730,8 @@ Available command names and what they do:
 | `devdb:sync:mysql` | Sync DevDB directly into a local MySQL database through `pdo_mysql`. |
 | `devdb:doctor` | Check DevDB storage health and report common issues. |
 | `devdb:repair` | Repair common metadata issues such as stale sequences. |
+| `devdb:benchmark` | Run a small insert/select/count benchmark against the current DevDB storage. |
+| `devdb:compat` | Show a MySQL compatibility report with supported, partial, metadata-only, and unsupported areas. |
 | `devdb:snapshot [action] [name]` | Create, list, restore, or delete snapshots. |
 | `devdb:clear` | Clear DevDB storage. Requires confirmation unless `--force` is used. |
 | `devdb:seed [package]` | Run app seeders against DevDB in a Pinoox host application. |
