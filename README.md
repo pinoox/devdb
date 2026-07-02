@@ -1,6 +1,8 @@
 # DevDB
 
-DevDB is a development-only database component for PHP projects. It gives you a small local database backed by JSON files, with a raw SQL translator for common development queries, so you can build and test features without installing MySQL, PostgreSQL, or SQLite.
+DevDB is a development-only database component for PHP projects. It gives you a small local database with a raw SQL translator for common development queries, so you can build and test features without installing MySQL, PostgreSQL, or SQLite.
+
+DevDB uses SQLite when available and automatically falls back to a zero-dependency JSON database when it is not.
 
 DevDB is designed for local development, prototypes, tests, demos, package examples, and single-user tooling. It is not a production database.
 
@@ -55,6 +57,7 @@ The short version: DevDB removes setup friction during development. Use it to st
 ## Features
 
 - JSON-backed local database storage.
+- SQLite-first local storage with automatic JSON fallback.
 - No external database service required.
 - File-based schema, data, migrations, and sequence metadata.
 - File locking for JSON writes.
