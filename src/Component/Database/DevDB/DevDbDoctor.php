@@ -41,6 +41,16 @@ final class DevDbDoctor
                 ];
             }
 
+            foreach ($this->missingColumns($rows, array_keys((array) ($meta['columns'] ?? []))) as $column => $count) {
+                $issues[] = [
+                    'type' => 'missing_column_values',
+                    'table' => $table,
+                    'column' => $column,
+                    'rows' => $count,
+                    'message' => 'Column "' . $column . '" is missing from ' . $count . ' row(s) in table "' . $table . '".',
+                ];
+            }
+
             $tables[] = [
                 'table' => $table,
                 'rows' => count($rows),
@@ -69,6 +79,26 @@ final class DevDbDoctor
         foreach (($schema['tables'] ?? []) as $table => $meta) {
             $table = (string) $table;
             $rows = $this->store->readTable($table);
+            $columns = (array) ($meta['columns'] ?? []);
+            $missing = $this->missingColumns($rows, array_keys($columns));
+            if ($missing !== []) {
+                foreach ($rows as &$row) {
+                    foreach ($missing as $column => $_count) {
+                        if (!array_key_exists($column, $row)) {
+                            $row[$column] = $this->defaultValueForColumn((array) ($columns[$column] ?? []));
+                        }
+                    }
+                }
+                unset($row);
+                foreach ($missing as $column => $count) {
+                    $repairs[] = [
+                        'type' => 'column_values_backfilled',
+                        'table' => $table,
+                        'column' => $column,
+                        'rows' => $count,
+                    ];
+                }
+            }
             $this->store->replaceTable($table, $rows);
 
             $primaryKey = (string) ($meta['primary_key'] ?? '');
@@ -106,5 +136,43 @@ final class DevDbDoctor
         }
 
         return $max;
+    }
+
+    private function missingColumns(array $rows, array $columns): array
+    {
+        $missing = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            foreach ($columns as $column) {
+                $column = (string) $column;
+                if (!array_key_exists($column, $row)) {
+                    $missing[$column] = (int) ($missing[$column] ?? 0) + 1;
+                }
+            }
+        }
+
+        return $missing;
+    }
+
+    private function defaultValueForColumn(array $column): mixed
+    {
+        if (!array_key_exists('default', $column)) {
+            return null;
+        }
+
+        $default = $column['default'];
+        if (is_string($default)) {
+            return match (strtolower($default)) {
+                'current_timestamp' => date('Y-m-d H:i:s'),
+                'current_date' => date('Y-m-d'),
+                'current_time' => date('H:i:s'),
+                default => $default,
+            };
+        }
+
+        return $default;
     }
 }
