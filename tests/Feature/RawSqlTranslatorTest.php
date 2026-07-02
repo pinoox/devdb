@@ -1,0 +1,174 @@
+<?php
+
+use Pinoox\Component\Database\DevDB\DevDbException;
+use Pinoox\DevDB\DevDatabase;
+
+it('translates raw CRUD statements with bindings, ordering, limits, and aggregates', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_crud'));
+    $db->statement('create table posts (id integer primary key auto_increment, title varchar(120), status varchar(20), views int)');
+
+    expect($db->execute(
+        'insert into posts (title, status, views) values (?, ?, ?), (?, ?, ?), (?, ?, ?)',
+        ['Intro', 'published', 10, 'Draft', 'draft', 5, 'Review', 'published', 30],
+    ))->toBe(3);
+
+    $published = $db->select('select id, title from posts where status = ? order by views desc limit 1', ['published']);
+    $aggregate = $db->selectOne('select count(*) as total, sum(views) as views from posts where id in (?, ?, ?)', [1, 2, 3]);
+
+    expect($published[0]->title)->toBe('Review')
+        ->and($aggregate->total)->toBe(3)
+        ->and($aggregate->views)->toBe(45.0)
+        ->and($db->execute('update posts set status = ? where title like ?', ['published', 'Draft%']))->toBe(1)
+        ->and($db->execute('delete from posts where views < ?', [10]))->toBe(1)
+        ->and($db->selectOne('select count(*) as total from posts')->total)->toBe(2);
+});
+
+it('supports W3Schools-style DISTINCT, NOT, defaults, and INSERT VALUES without column lists', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_w3schools_basics'));
+    $db->statement('create table customers (id integer primary key auto_increment, name varchar(120) not null, city varchar(80) default "Tehran", country varchar(80), email varchar(120), unique index customers_email_unique (email))');
+
+    $db->statement(
+        'insert into customers values (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)',
+        [1, 'Ava', 'Tehran', 'Iran', 'ava@example.com', 2, 'Noah', 'Berlin', 'Germany', 'noah@example.com', 3, 'Mina', 'Tehran', 'Iran', 'mina@example.com'],
+    );
+    $db->statement(
+        'insert into customers (name, country, email) values (?, ?, ?)',
+        ['Sara', 'Iran', 'sara@example.com'],
+    );
+
+    $countries = $db->select('SELECT DISTINCT country FROM customers ORDER BY country');
+    $notIran = $db->select('select name from customers where not country = ? order by id', ['Iran']);
+    $defaulted = $db->selectOne('select city from customers where email = ?', ['sara@example.com']);
+
+    expect(array_map(fn ($row) => $row->country, $countries))->toBe(['Germany', 'Iran'])
+        ->and(array_map(fn ($row) => $row->name, $notIran))->toBe(['Noah'])
+        ->and($defaulted->city)->toBe('Tehran')
+        ->and(fn () => $db->statement('insert into customers (name, email) values (?, ?)', ['Duplicate', 'ava@example.com']))
+        ->toThrow(DevDbException::class, 'unique constraint violation');
+});
+
+it('supports W3Schools-style INSERT INTO SELECT and EXISTS predicates', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_w3schools_insert_select'));
+    $db->statement('create table customers (id integer primary key, name varchar(120), country varchar(80))');
+    $db->statement('create table customer_archive (id integer primary key auto_increment, name varchar(120), country varchar(80))');
+    $db->statement(
+        'insert into customers (id, name, country) values (?, ?, ?), (?, ?, ?), (?, ?, ?)',
+        [1, 'Ava', 'Iran', 2, 'Noah', 'Germany', 3, 'Mina', 'Iran'],
+    );
+
+    expect($db->execute(
+        'insert into customer_archive (name, country) select name, country from customers where country = ?',
+        ['Iran'],
+    ))->toBe(2);
+
+    $exists = $db->select('select name from customers where exists (select id from customer_archive where country = ?) order by id', ['Iran']);
+    $notExists = $db->select('select name from customers where not exists (select id from customer_archive where country = ?)', ['France']);
+    $missingExists = $db->select('select name from customers where exists (select id from customer_archive where country = ?)', ['France']);
+
+    expect(array_map(fn ($row) => $row->name, $exists))->toBe(['Ava', 'Noah', 'Mina'])
+        ->and(array_map(fn ($row) => $row->name, $notExists))->toBe(['Ava', 'Noah', 'Mina'])
+        ->and($missingExists)->toBe([]);
+});
+
+it('translates joins, grouped rows, aliases, and boolean expressions', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_join'));
+    $db->statement('create table users (id integer primary key, name varchar(80), role varchar(20))');
+    $db->statement('create table posts (id integer primary key, user_id integer, title varchar(80), status varchar(20), views int)');
+
+    $db->statement(
+        'insert into users (id, name, role) values (?, ?, ?), (?, ?, ?)',
+        [1, 'Ava', 'author', 2, 'Noah', 'editor'],
+    );
+    $db->statement(
+        'insert into posts (id, user_id, title, status, views) values (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)',
+        [1, 1, 'Intro', 'published', 10, 2, 1, 'Draft', 'draft', 5, 3, 2, 'Review', 'published', 30],
+    );
+
+    $joined = $db->select(
+        'select p.id as post_id, u.name as author from posts p join users u on u.id = p.user_id where (p.status = ? or p.views >= ?) order by p.views desc',
+        ['draft', 20],
+    );
+    $grouped = $db->select(
+        'select u.role, count(*) as total, sum(p.views) as views from posts p join users u on u.id = p.user_id group by u.role having total >= ? order by views desc',
+        [1],
+    );
+
+    expect(array_map(fn ($row) => $row->post_id, $joined))->toBe([3, 2])
+        ->and($joined[0]->author)->toBe('Noah')
+        ->and($grouped[0]->role)->toBe('editor')
+        ->and($grouped[1]->role)->toBe('author')
+        ->and($grouped[1]->views)->toBe(15.0);
+});
+
+it('supports table aliases with and without AS using case-insensitive SQL keywords', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_alias_case'));
+    $db->statement('CREATE TABLE pages (page_id integer primary key, title varchar(120))');
+    $db->statement(
+        'INSERT INTO pages (page_id, title) VALUES (?, ?), (?, ?), (?, ?)',
+        [1, 'Home', 2, 'About', 3, 'Contact'],
+    );
+
+    $withAs = $db->select('SELECT p.page_id FROM pages AS p WHERE p.page_id > ? ORDER BY p.page_id', [1]);
+    $withoutAs = $db->select('select p.page_id from pages p where p.page_id > ? order by p.page_id desc', [1]);
+
+    expect(array_map(fn ($row) => $row->page_id, $withAs))->toBe([2, 3])
+        ->and(array_map(fn ($row) => $row->page_id, $withoutAs))->toBe([3, 2]);
+});
+
+it('translates common SQL functions in projections and predicates', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_functions'));
+    $db->statement('create table events (id integer primary key auto_increment, email varchar(120), title varchar(80), created_at datetime, amount int)');
+    $db->statement(
+        'insert into events (email, title, created_at, amount) values (?, ?, ?, ?), (?, ?, ?, ?)',
+        ['AVA@EXAMPLE.COM', ' Launch ', '2026-06-29 10:15:00', -9, 'noah@example.com', null, '2026-06-30 10:00:00', 4],
+    );
+
+    $row = $db->selectOne(
+        "select lower(email) as email, upper(trim(title)) as title, date(created_at) as day, abs(amount) as amount, concat(substr(email, 1, 3), '-', year(created_at)) as token from events where date(created_at) = ? and lower(email) like ?",
+        ['2026-06-29', 'ava%'],
+    );
+
+    expect($row->email)->toBe('ava@example.com')
+        ->and($row->title)->toBe('LAUNCH')
+        ->and($row->day)->toBe('2026-06-29')
+        ->and($row->amount)->toBe(9.0)
+        ->and($row->token)->toBe('AVA-2026');
+});
+
+it('accepts MySQL dump style schema syntax', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_mysql_dump'));
+
+    $db->statement('SET NAMES utf8mb4');
+    $db->statement('SET FOREIGN_KEY_CHECKS = 0');
+    $db->statement('DROP TABLE IF EXISTS `discounts`');
+    $db->statement(<<<'SQL'
+CREATE TABLE `discounts` (
+  `discount_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `code` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `type` enum('percentage','fixed') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'percentage',
+  `is_active` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`discount_id`) USING BTREE,
+  UNIQUE INDEX `discounts_code_unique`(`code`) USING BTREE,
+  INDEX `discounts_code_is_active_index`(`code`, `is_active`) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 6 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_bin ROW_FORMAT = Dynamic
+SQL);
+
+    $db->statement('insert into discounts (code, type, is_active) values (?, ?, ?)', ['SUMMER', 'fixed', 1]);
+    $row = $db->selectOne('select discount_id, code from discounts');
+    $columns = $db->select('describe discounts');
+    $indexes = $db->select('show keys from discounts');
+
+    expect($row->discount_id)->toBe(6)
+        ->and($columns[2]->Type)->toBe('enum')
+        ->and(array_map(fn ($index) => $index->Key_name, $indexes))->toContain('discounts_code_unique', 'discounts_code_is_active_index');
+});
+
+it('throws useful errors for unsupported or invalid raw SQL', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_errors'));
+    $db->statement('create table posts (id integer primary key, title varchar(120))');
+
+    expect(fn () => $db->select('select id from posts union select id from posts'))
+        ->toThrow(DevDbException::class, 'raw SELECT unions')
+        ->and(fn () => $db->statement('create view recent_posts as select * from posts'))
+        ->toThrow(DevDbException::class, 'raw SQL statement "CREATE"');
+});
