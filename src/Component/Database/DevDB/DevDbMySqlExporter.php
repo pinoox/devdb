@@ -8,32 +8,47 @@ final class DevDbMySqlExporter
 {
     /**
      * @param array<string,mixed> $export
+     * @param list<string>|null $tables
      */
-    public function toSql(array $export, bool $dropTables = true): string
+    public function toSql(array $export, bool $dropTables = true, ?array $tables = null, string $mode = 'all'): string
     {
         $schema = is_array($export['schema'] ?? null) ? $export['schema'] : [];
         $data = is_array($export['data'] ?? null) ? $export['data'] : [];
+        $tables = $tables === null ? null : array_values(array_filter($tables, fn (string $table): bool => $table !== ''));
+        $mode = in_array($mode, ['all', 'schema', 'data'], true) ? $mode : 'all';
         $statements = [
             'SET NAMES utf8mb4;',
             'SET FOREIGN_KEY_CHECKS=0;',
         ];
 
-        foreach (($schema['tables'] ?? []) as $table => $meta) {
-            $table = (string) $table;
-            if ($dropTables) {
-                $statements[] = 'DROP TABLE IF EXISTS ' . $this->quoteIdentifier($table) . ';';
-            }
+        if ($mode !== 'data') {
+            foreach (($schema['tables'] ?? []) as $table => $meta) {
+                $table = (string) $table;
+                if (!$this->includesTable($table, $tables)) {
+                    continue;
+                }
 
-            $statements[] = $this->createTableSql($table, is_array($meta) ? $meta : []) . ';';
+                if ($dropTables) {
+                    $statements[] = 'DROP TABLE IF EXISTS ' . $this->quoteIdentifier($table) . ';';
+                }
+
+                $statements[] = $this->createTableSql($table, is_array($meta) ? $meta : []) . ';';
+            }
         }
 
-        foreach ($data as $table => $rows) {
-            if (!is_array($rows) || $rows === []) {
-                continue;
-            }
+        if ($mode !== 'schema') {
+            foreach ($data as $table => $rows) {
+                if (!$this->includesTable((string) $table, $tables)) {
+                    continue;
+                }
 
-            foreach (array_chunk(array_values($rows), 100) as $chunk) {
-                $statements[] = $this->insertSql((string) $table, $chunk) . ';';
+                if (!is_array($rows) || $rows === []) {
+                    continue;
+                }
+
+                foreach (array_chunk(array_values($rows), 100) as $chunk) {
+                    $statements[] = $this->insertSql((string) $table, $chunk) . ';';
+                }
             }
         }
 
@@ -44,14 +59,31 @@ final class DevDbMySqlExporter
 
     /**
      * @param array<string,mixed> $export
+     * @param list<string>|null $tables
      */
-    public function sync(PDO $pdo, array $export, bool $dropTables = true): void
+    public function sync(PDO $pdo, array $export, bool $dropTables = true, ?array $tables = null, string $mode = 'all'): void
     {
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-        foreach ($this->splitStatements($this->toSql($export, $dropTables)) as $statement) {
+        foreach ($this->splitStatements($this->toSql($export, $dropTables, $tables, $mode)) as $statement) {
             $pdo->exec($statement);
         }
+    }
+
+    /**
+     * @param list<string>|null $tables
+     */
+    public function summary(array $export, ?array $tables = null): array
+    {
+        $schema = is_array($export['schema']['tables'] ?? null) ? $export['schema']['tables'] : [];
+        $data = is_array($export['data'] ?? null) ? $export['data'] : [];
+        $selected = array_values(array_filter(array_keys($schema), fn (string $table): bool => $this->includesTable($table, $tables)));
+
+        return [
+            'tables' => count($selected),
+            'rows' => array_sum(array_map(fn (string $table): int => count((array) ($data[$table] ?? [])), $selected)),
+            'table_names' => $selected,
+        ];
     }
 
     /**
@@ -115,6 +147,14 @@ final class DevDbMySqlExporter
         return 'CREATE TABLE ' . $this->quoteIdentifier($table) . ' (' . PHP_EOL
             . implode(',' . PHP_EOL, $lines) . PHP_EOL
             . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    }
+
+    /**
+     * @param list<string>|null $tables
+     */
+    private function includesTable(string $table, ?array $tables): bool
+    {
+        return $tables === null || in_array($table, $tables, true);
     }
 
     /**

@@ -21,14 +21,19 @@ class DevDbExportMySqlCommand extends Terminal
     protected function configure(): void
     {
         $this->addArgument('file', InputArgument::OPTIONAL, 'Optional output SQL file')
-            ->addOption('no-drop', null, InputOption::VALUE_NONE, 'Do not emit DROP TABLE statements');
+            ->addOption('no-drop', null, InputOption::VALUE_NONE, 'Do not emit DROP TABLE statements')
+            ->addOption('schema-only', null, InputOption::VALUE_NONE, 'Export schema without row data')
+            ->addOption('data-only', null, InputOption::VALUE_NONE, 'Export row data without schema')
+            ->addOption('tables', null, InputOption::VALUE_REQUIRED, 'Comma-separated table names to export');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
-        $sql = (new DevDbMySqlExporter())->toSql($this->runtime()->export(), !$input->getOption('no-drop'));
+        $mode = $input->getOption('schema-only') ? 'schema' : ($input->getOption('data-only') ? 'data' : 'all');
+        $tables = $this->tableOption((string) ($input->getOption('tables') ?? ''));
+        $sql = (new DevDbMySqlExporter())->toSql($this->runtime()->export(), !$input->getOption('no-drop'), $tables, $mode);
         $file = $input->getArgument('file');
 
         if (is_string($file) && $file !== '') {
@@ -45,5 +50,14 @@ class DevDbExportMySqlCommand extends Terminal
         $io->writeln($sql);
 
         return Command::SUCCESS;
+    }
+
+    private function tableOption(string $tables): ?array
+    {
+        if (trim($tables) === '') {
+            return null;
+        }
+
+        return array_values(array_filter(array_map('trim', explode(',', $tables))));
     }
 }
