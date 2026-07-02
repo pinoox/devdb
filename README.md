@@ -51,7 +51,6 @@ The short version: DevDB removes setup friction during development. Use it to st
 - [CLI Commands](#cli-commands)
 - [Troubleshooting](#troubleshooting)
 - [Performance Expectations](#performance-expectations)
-- [Version Roadmap](#version-roadmap)
 - [Limitations](#limitations)
 - [Package Structure](#package-structure)
 - [Development](#development)
@@ -718,22 +717,6 @@ $posts = $connection->select('select * from posts');
 ```
 
 ## CLI Commands
-
-The package includes Symfony Console command classes that host applications can register. In Pinoox or Pinx these commands may be exposed directly by the host CLI. In another framework, register the command classes in your console kernel or command registry.
-
-```text
-Pinoox\Terminal\DevDB\DevDbStatusCommand
-Pinoox\Terminal\DevDB\DevDbInspectCommand
-Pinoox\Terminal\DevDB\DevDbExportCommand
-Pinoox\Terminal\DevDB\DevDbExportMySqlCommand
-Pinoox\Terminal\DevDB\DevDbImportMySqlCommand
-Pinoox\Terminal\DevDB\DevDbSyncMySqlCommand
-Pinoox\Terminal\DevDB\DevDbClearCommand
-Pinoox\Terminal\DevDB\DevDbDoctorCommand
-Pinoox\Terminal\DevDB\DevDbRepairCommand
-Pinoox\Terminal\DevDB\DevDbSnapshotCommand
-Pinoox\Terminal\DevDB\DevDbSeedCommand
-```
 
 Available command names and what they do:
 

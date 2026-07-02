@@ -65,6 +65,25 @@ it('backfills existing rows when adding a defaulted column', function () {
         ->and($rows[1]->status)->toBe('draft');
 });
 
+it('supports modify and change column schema mutations', function () {
+    $db = DevDatabase::open(devdb_test_path('schema_modify_change'));
+    $db->statement('create table users (id integer primary key auto_increment, email varchar(120), status varchar(20) default "pending")');
+    $db->statement('create index users_status_index on users (status)');
+    $db->statement('insert into users (email, status) values (?, ?)', ['old@example.com', 'active']);
+
+    $db->statement('alter table users modify column email varchar(190) not null');
+    $db->statement('alter table users change column status state varchar(30) default "active"');
+
+    $columns = $db->select('desc users');
+    $indexes = $db->select('show keys from users');
+
+    expect(array_map(fn ($column) => $column->Field, $columns))->toBe(['id', 'email', 'state'])
+        ->and($columns[1]->Null)->toBe('NO')
+        ->and($columns[1]->Type)->toBe('string(190)')
+        ->and($db->selectOne('select state from users where email = ?', ['old@example.com'])->state)->toBe('active')
+        ->and($indexes[1]->Column_name)->toBe('state');
+});
+
 it('renames tables while preserving rows and metadata', function () {
     $db = DevDatabase::open(devdb_test_path('schema_rename'));
     $db->statement('create table old_posts (id integer primary key auto_increment, title varchar(120))');

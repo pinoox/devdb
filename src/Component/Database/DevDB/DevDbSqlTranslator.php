@@ -660,6 +660,39 @@ final class DevDbSqlTranslator
             return;
         }
 
+        if (preg_match('/^modify(?:\s+column)?\s+(?<definition>.+)$/is', $action, $modifyMatch) === 1) {
+            [$name, $definition] = $this->parseColumnDefinition($modifyMatch['definition']);
+            if (!isset($columns[$name])) {
+                throw new DevDbException('DevDB column "' . $table . '.' . $name . '" does not exist.');
+            }
+
+            $columns[$name] = array_replace($columns[$name], $definition);
+            $this->saveTableMetadata($table, $columns, $indexes);
+
+            return;
+        }
+
+        if (preg_match('/^change(?:\s+column)?\s+(?<from>[`"\[\]A-Za-z0-9_.-]+)\s+(?<definition>.+)$/is', $action, $changeMatch) === 1) {
+            $from = $this->cleanIdentifier($changeMatch['from']);
+            [$to, $definition] = $this->parseColumnDefinition($changeMatch['definition']);
+            if (!isset($columns[$from])) {
+                throw new DevDbException('DevDB column "' . $table . '.' . $from . '" does not exist.');
+            }
+
+            $columns[$to] = array_replace($columns[$from], $definition);
+            if ($from !== $to) {
+                unset($columns[$from]);
+                $indexes = $this->renameColumnInIndexes($indexes, $from, $to);
+            }
+
+            $this->saveTableMetadata($table, $columns, $indexes);
+            if ($from !== $to) {
+                $this->renameColumnData($table, $from, $to);
+            }
+
+            return;
+        }
+
         if (preg_match('/^drop\s+column\s+(?<column>[`"\[\]A-Za-z0-9_.-]+)$/i', $action, $dropMatch) === 1) {
             $column = $this->cleanIdentifier($dropMatch['column']);
             unset($columns[$column]);
@@ -675,6 +708,7 @@ final class DevDbSqlTranslator
             if (isset($columns[$from])) {
                 $columns[$to] = $columns[$from];
                 unset($columns[$from]);
+                $indexes = $this->renameColumnInIndexes($indexes, $from, $to);
             }
             $this->saveTableMetadata($table, $columns, $indexes);
             $this->renameColumnData($table, $from, $to);
@@ -1831,6 +1865,26 @@ final class DevDbSqlTranslator
         if ($changed) {
             $this->store->replaceTable($table, $rows);
         }
+    }
+
+    private function renameColumnInIndexes(array $indexes, string $from, string $to): array
+    {
+        foreach ($indexes as &$index) {
+            foreach (['columns', 'column', 'references_columns'] as $key) {
+                if (!isset($index[$key])) {
+                    continue;
+                }
+
+                $values = array_map(
+                    fn (string $column): string => $column === $from ? $to : $column,
+                    array_values((array) $index[$key])
+                );
+                $index[$key] = $key === 'column' ? ($values[0] ?? $to) : $values;
+            }
+        }
+        unset($index);
+
+        return $indexes;
     }
 
     private function primaryKeyFromColumns(array $columns): ?string
