@@ -1012,23 +1012,20 @@ DevDB is optimized for local development, small demos, tests, and package exampl
 
 ## Limitations
 
-DevDB is intentionally not a full SQL server.
+DevDB is intentionally development-first, not a replacement for a full SQL server.
 
-Unsupported or limited features include:
+The remaining limitations are intentionally narrow:
 
 - recursive CTE queries
-- window functions
 - correlated subqueries that reference the outer row
-- full SQL optimizer behavior
-- every vendor-specific SQL function
-- full foreign key cascade behavior
-- stored procedures
-- triggers
+- full SQL optimizer/query planner behavior
+- complete coverage of every vendor-specific SQL function
+- complete trigger/procedure execution semantics
 - isolation-level transaction behavior
 - real database locks
 - production workloads
 
-DevDB now supports common `UNION`, `UNION ALL`, simple subqueries, simple views, compatibility locks, and many MySQL-style functions. When a query is still not supported, DevDB throws a clear exception. For exact SQL-server behavior, use SQLite, MySQL, PostgreSQL, or another real database engine.
+DevDB supports common `UNION`, `UNION ALL`, simple subqueries, scalar subqueries, simple views, compatibility locks, many MySQL-style functions, `CASE`, `ON DUPLICATE KEY UPDATE`, `ROW_NUMBER()`, simple foreign key validation, and basic `ON DELETE CASCADE` / `SET NULL` behavior. Trigger, procedure, and function definitions from dumps are accepted as metadata for compatibility, but they are not executed. When a query is still not supported, DevDB throws a clear exception. For exact SQL-server behavior, use SQLite, MySQL, PostgreSQL, or another real database engine.
 
 ## Package Structure
 

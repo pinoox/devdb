@@ -254,12 +254,34 @@ SQL);
         ->and($row->segment)->toBe('active');
 });
 
+it('supports simple foreign key delete actions, routine metadata, and row number windows', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_limits_reduced'));
+    $db->executeDump(<<<'SQL'
+CREATE TABLE users (id integer primary key auto_increment, email varchar(120));
+CREATE TABLE posts (
+  id integer primary key auto_increment,
+  user_id integer,
+  title varchar(120),
+  CONSTRAINT posts_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+INSERT INTO users (email) VALUES ('ava@example.com'), ('noah@example.com');
+INSERT INTO posts (user_id, title) VALUES (1, 'A'), (1, 'B'), (2, 'C');
+CREATE TRIGGER posts_ai AFTER INSERT ON posts FOR EACH ROW SET @x = 1;
+CREATE PROCEDURE refresh_posts() SELECT 1;
+SQL);
+
+    $numbered = $db->select('select title, row_number() over (order by id) as row_num from posts order by id');
+    $db->statement('delete from users where id = 1');
+
+    expect(array_map(fn ($row) => $row->row_num, $numbered))->toBe([1, 2, 3])
+        ->and($db->selectOne('select count(*) as total from posts')->total)->toBe(1)
+        ->and(array_keys($db->store()->schema()['routines'] ?? []))->toContain('trigger:posts_ai', 'procedure:refresh_posts');
+});
+
 it('throws useful errors for unsupported or invalid raw SQL', function () {
     $db = DevDatabase::open(devdb_test_path('raw_errors'));
     $db->statement('create table posts (id integer primary key, title varchar(120))');
 
-    expect(fn () => $db->statement('create trigger posts_ai after insert on posts for each row set @x = 1'))
-        ->toThrow(DevDbException::class, 'Try simplifying the query')
-        ->and(fn () => $db->select('with recursive ids as (select 1) select * from ids'))
+    expect(fn () => $db->select('with recursive ids as (select 1) select * from ids'))
         ->toThrow(DevDbException::class, 'raw SELECT syntax');
 });

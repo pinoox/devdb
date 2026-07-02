@@ -123,6 +123,7 @@ final class DevDbSqlTranslator
         } else {
             $rows = $this->sortRows($rows, $query['order']);
             $rows = $this->sliceRows($rows, $query['limit'], $query['offset']);
+            $rows = $this->applyWindowColumns($rows, $query['columns']);
             $rows = array_map(fn (array $row): array => $this->projectRow($row, $query['columns']), $rows);
             if ($query['distinct']) {
                 $rows = $this->distinctRows($rows);
@@ -176,6 +177,18 @@ final class DevDbSqlTranslator
 
         if (preg_match('/^drop\s+view\s+/i', $sql) === 1) {
             return $this->dropView($sql);
+        }
+
+        if (preg_match('/^create\s+(?:definer\s*=\s*\S+\s+)?(?<type>trigger|procedure|function)\s+(?<name>[`"\[\]A-Za-z0-9_.-]+)/i', $sql, $routineMatch) === 1) {
+            $this->recordRoutine(strtolower($routineMatch['type']), $this->cleanIdentifier($routineMatch['name']), $sql);
+
+            return 0;
+        }
+
+        if (preg_match('/^drop\s+(?<type>trigger|procedure|function)\s+(?:if\s+exists\s+)?(?<name>[`"\[\]A-Za-z0-9_.-]+)/i', $sql, $routineMatch) === 1) {
+            $this->dropRoutine(strtolower($routineMatch['type']), $this->cleanIdentifier($routineMatch['name']));
+
+            return 0;
         }
 
         if (preg_match('/^create\s+table\s+/i', $sql) === 1) {
@@ -445,6 +458,7 @@ final class DevDbSqlTranslator
             $qualified = $this->qualifyRow((array) $row, $table, $table);
             if ($this->matchesWhere($qualified, $where, $bindings)) {
                 $affected++;
+                $this->applyForeignKeyDeleteActions($table, (array) $row);
                 continue;
             }
 
@@ -454,6 +468,53 @@ final class DevDbSqlTranslator
         $this->store->replaceTable($table, $kept);
 
         return $affected;
+    }
+
+    private function applyForeignKeyDeleteActions(string $parentTable, array $parentRow): void
+    {
+        $schema = $this->store->schema();
+
+        foreach (($schema['tables'] ?? []) as $childTable => $meta) {
+            foreach (($meta['indexes'] ?? []) as $index) {
+                if (($index['name'] ?? null) !== 'foreign' || ($index['references_table'] ?? null) !== $parentTable) {
+                    continue;
+                }
+
+                $action = strtoupper((string) ($index['on_delete'] ?? ''));
+                if (!in_array($action, ['CASCADE', 'SET NULL'], true)) {
+                    continue;
+                }
+
+                $childColumns = array_values((array) ($index['columns'] ?? []));
+                $parentColumns = array_values((array) ($index['references_columns'] ?? []));
+                $rows = [];
+
+                foreach ($this->store->readTable((string) $childTable) as $childRow) {
+                    $matches = true;
+                    foreach ($childColumns as $offset => $childColumn) {
+                        $parentColumn = (string) ($parentColumns[$offset] ?? '');
+                        if (($childRow[(string) $childColumn] ?? null) !== ($parentRow[$parentColumn] ?? null)) {
+                            $matches = false;
+                            break;
+                        }
+                    }
+
+                    if ($matches && $action === 'CASCADE') {
+                        continue;
+                    }
+
+                    if ($matches && $action === 'SET NULL') {
+                        foreach ($childColumns as $childColumn) {
+                            $childRow[(string) $childColumn] = null;
+                        }
+                    }
+
+                    $rows[] = $childRow;
+                }
+
+                $this->store->replaceTable((string) $childTable, $rows);
+            }
+        }
     }
 
     private function createTable(string $sql): void
@@ -554,6 +615,27 @@ final class DevDbSqlTranslator
         $this->store->saveSchema($schema);
 
         return $affected;
+    }
+
+    private function recordRoutine(string $type, string $name, string $sql): void
+    {
+        $schema = $this->store->schema();
+        $schema['routines'] ??= [];
+        $schema['routines'][$type . ':' . $name] = [
+            'type' => $type,
+            'name' => $name,
+            'sql' => $sql,
+            'stored_as' => 'metadata',
+            'updated_at' => date(DATE_ATOM),
+        ];
+        $this->store->saveSchema($schema);
+    }
+
+    private function dropRoutine(string $type, string $name): void
+    {
+        $schema = $this->store->schema();
+        unset($schema['routines'][$type . ':' . $name]);
+        $this->store->saveSchema($schema);
     }
 
     private function alterTable(string $sql): void
@@ -1068,6 +1150,22 @@ final class DevDbSqlTranslator
         return array_values(array_map(fn (array $groupRows): array => $this->aggregateRow($groupRows, $columns), $groups));
     }
 
+    private function applyWindowColumns(array $rows, string $columns): array
+    {
+        foreach ($this->splitCsv($columns) as $column) {
+            if (preg_match('/^row_number\s*\(\s*\)\s+over\s*\((?:order\s+by\s+[^)]+)?\)\s+as\s+(?<alias>[`"\[\]A-Za-z0-9_.-]+)$/i', trim($column), $match) !== 1) {
+                continue;
+            }
+
+            $alias = $this->cleanIdentifier($match['alias']);
+            foreach ($rows as $offset => $row) {
+                $rows[$offset][$alias] = $offset + 1;
+            }
+        }
+
+        return $rows;
+    }
+
     private function aggregateRow(array $rows, string $columns): array
     {
         $result = [];
@@ -1105,6 +1203,12 @@ final class DevDbSqlTranslator
 
         $projected = [];
         foreach ($this->splitCsv($columns) as $column) {
+            if (preg_match('/^row_number\s*\(\s*\)\s+over\s*\((?:order\s+by\s+[^)]+)?\)\s+as\s+(?<alias>[`"\[\]A-Za-z0-9_.-]+)$/i', trim($column), $match) === 1) {
+                $alias = $this->cleanIdentifier($match['alias']);
+                $projected[$alias] = $row[$alias] ?? null;
+                continue;
+            }
+
             [$name, $alias] = $this->columnAndAlias($column);
             $projected[$alias] = $this->expressionValue($row, $name);
         }
