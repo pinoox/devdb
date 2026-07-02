@@ -259,7 +259,7 @@ it('throws useful errors for unsupported or invalid raw SQL', function () {
     $db->statement('create table posts (id integer primary key, title varchar(120))');
 
     expect(fn () => $db->statement('create trigger posts_ai after insert on posts for each row set @x = 1'))
-        ->toThrow(DevDbException::class, 'raw SQL statement "CREATE"')
+        ->toThrow(DevDbException::class, 'Try simplifying the query')
         ->and(fn () => $db->select('with recursive ids as (select 1) select * from ids'))
         ->toThrow(DevDbException::class, 'raw SELECT syntax');
 });
