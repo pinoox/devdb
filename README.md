@@ -49,6 +49,9 @@ The short version: DevDB removes setup friction during development. Use it to st
 - [Standalone API](#standalone-api)
 - [Laravel-Compatible Connection](#laravel-compatible-connection)
 - [CLI Commands](#cli-commands)
+- [Troubleshooting](#troubleshooting)
+- [Performance Expectations](#performance-expectations)
+- [Version Roadmap](#version-roadmap)
 - [Limitations](#limitations)
 - [Package Structure](#package-structure)
 - [Development](#development)
@@ -722,8 +725,12 @@ Pinoox\Terminal\DevDB\DevDbStatusCommand
 Pinoox\Terminal\DevDB\DevDbInspectCommand
 Pinoox\Terminal\DevDB\DevDbExportCommand
 Pinoox\Terminal\DevDB\DevDbExportMySqlCommand
+Pinoox\Terminal\DevDB\DevDbImportMySqlCommand
 Pinoox\Terminal\DevDB\DevDbSyncMySqlCommand
 Pinoox\Terminal\DevDB\DevDbClearCommand
+Pinoox\Terminal\DevDB\DevDbDoctorCommand
+Pinoox\Terminal\DevDB\DevDbRepairCommand
+Pinoox\Terminal\DevDB\DevDbSnapshotCommand
 Pinoox\Terminal\DevDB\DevDbSeedCommand
 ```
 
@@ -735,7 +742,11 @@ Available command names and what they do:
 | `devdb:inspect <table>` | Inspect one table, including columns, indexes, primary key, row count, and sample rows. |
 | `devdb:export [file]` | Export the full DevDB payload as JSON. |
 | `devdb:export:mysql [file]` | Export DevDB as a MySQL-compatible SQL dump for phpMyAdmin or MySQL imports. |
+| `devdb:import:mysql <file>` | Import a MySQL/phpMyAdmin SQL dump into DevDB. |
 | `devdb:sync:mysql` | Sync DevDB directly into a local MySQL database through `pdo_mysql`. |
+| `devdb:doctor` | Check DevDB storage health and report common issues. |
+| `devdb:repair` | Repair common metadata issues such as stale sequences. |
+| `devdb:snapshot [action] [name]` | Create, list, restore, or delete snapshots. |
 | `devdb:clear` | Clear DevDB storage. Requires confirmation unless `--force` is used. |
 | `devdb:seed [package]` | Run app seeders against DevDB in a Pinoox host application. |
 
@@ -803,6 +814,33 @@ By default the dump includes `DROP TABLE IF EXISTS` statements so repeated impor
 devdb:export:mysql storage/devdb/devdb.sql --no-drop
 ```
 
+Export only schema or only data:
+
+```bash
+devdb:export:mysql storage/devdb/schema.sql --schema-only
+devdb:export:mysql storage/devdb/data.sql --data-only
+```
+
+Export specific tables:
+
+```bash
+devdb:export:mysql storage/devdb/users.sql --tables=users,profiles
+```
+
+### Import from MySQL or phpMyAdmin
+
+Use `devdb:import:mysql` when you have a MySQL dump and want to load it into DevDB:
+
+```bash
+devdb:import:mysql storage/devdb/devdb.sql
+```
+
+For loose fixture imports where you do not want strict constraints to block loading:
+
+```bash
+devdb:import:mysql storage/devdb/devdb.sql --loose
+```
+
 ### Sync Directly to MySQL
 
 Use `devdb:sync:mysql` when you have a local MySQL or MariaDB server and want DevDB copied into it automatically:
@@ -828,8 +866,45 @@ Available MySQL options:
 | `--username` | MySQL username. Defaults to `root` or `DEVDB_MYSQL_USERNAME`. |
 | `--password` | MySQL password. Defaults to `DEVDB_MYSQL_PASSWORD`. |
 | `--no-drop` | Do not drop existing tables before syncing. |
+| `--schema-only` | Sync schema without row data. |
+| `--data-only` | Sync row data without schema. |
+| `--tables` | Comma-separated table list to sync. |
+| `--dry-run` | Show what would be synced without connecting to MySQL. |
 
 Direct sync requires the `pdo_mysql` PHP extension. If it is not available, use `devdb:export:mysql` and import the SQL file manually through phpMyAdmin.
+
+Preview a sync:
+
+```bash
+devdb:sync:mysql --database=app_dev --dry-run
+```
+
+### Check and Repair DevDB
+
+Use `devdb:doctor` to inspect storage health:
+
+```bash
+devdb:doctor
+devdb:doctor --json
+```
+
+Use `devdb:repair` to recreate missing data files, refresh metadata, update stale sequences, and write a fresh manifest:
+
+```bash
+devdb:repair
+devdb:repair --json
+```
+
+### Snapshots
+
+Snapshots are useful before running destructive experiments or imports:
+
+```bash
+devdb:snapshot create before-import
+devdb:snapshot list
+devdb:snapshot restore before-import
+devdb:snapshot delete before-import
+```
 
 ### Clear DevDB
 
@@ -886,6 +961,59 @@ DEVDB_MYSQL_PASSWORD=
 ```
 
 Command registration depends on the host application or framework.
+
+## Troubleshooting
+
+### SQLite is not installed
+
+DevDB uses SQLite when `pdo_sqlite` is available. If it is not available, DevDB automatically uses the JSON engine. No extra setup is required.
+
+### MySQL sync fails
+
+Direct sync requires `pdo_mysql` and a reachable MySQL or MariaDB database. If `pdo_mysql` is missing, run:
+
+```bash
+devdb:export:mysql storage/devdb/devdb.sql
+```
+
+Then import the file manually through phpMyAdmin.
+
+### A query is not supported
+
+DevDB throws a clear exception for unsupported SQL. Try simplifying the query, using the SQLite engine, or syncing to MySQL for exact server behavior.
+
+### IDs look wrong after editing JSON files
+
+Run:
+
+```bash
+devdb:doctor
+devdb:repair
+```
+
+This refreshes sequence metadata from table data.
+
+## Performance Expectations
+
+DevDB is optimized for local development, small demos, tests, and package examples.
+
+- SQLite engine is preferred when available.
+- JSON fallback is zero-dependency and best for small to medium local datasets.
+- Large tables, high concurrency, and production workloads should use SQLite/MySQL/PostgreSQL directly.
+- JSON writes use file locking, but they are not a substitute for real database locks.
+- Use `devdb:sync:mysql` or `devdb:export:mysql` when you need phpMyAdmin, MySQL tooling, or exact SQL-server behavior.
+
+## Version Roadmap
+
+Suggested release path:
+
+| Version | Focus |
+| --- | --- |
+| `v0.1.0` | Initial standalone DevDB preview. |
+| `v0.2.0` | SQL compatibility, MySQL export/sync, and plain PHP adapters. |
+| `v0.3.0` | Engine abstraction, stronger SQLite integration, and import workflows. |
+| `v0.4.0` | Broader SQL compatibility and performance improvements. |
+| `v1.0.0` | Stable local-development API. |
 
 ## Limitations
 
