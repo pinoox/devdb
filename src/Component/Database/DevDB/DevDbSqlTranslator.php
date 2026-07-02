@@ -433,6 +433,7 @@ final class DevDbSqlTranslator
             $this->guardColumnConstraints($table, $updatedRow);
             $this->guardUniqueConstraints($table, $updatedRow, $otherRows);
             $this->guardForeignKeyConstraints($table, $updatedRow);
+            $this->applyForeignKeyUpdateActions($table, (array) $row, $updatedRow);
             $rows[$index] = $updatedRow;
             $affected++;
         }
@@ -481,13 +482,10 @@ final class DevDbSqlTranslator
                 }
 
                 $action = strtoupper((string) ($index['on_delete'] ?? ''));
-                if (!in_array($action, ['CASCADE', 'SET NULL'], true)) {
-                    continue;
-                }
-
                 $childColumns = array_values((array) ($index['columns'] ?? []));
                 $parentColumns = array_values((array) ($index['references_columns'] ?? []));
                 $rows = [];
+                $matchedRows = 0;
 
                 foreach ($this->store->readTable((string) $childTable) as $childRow) {
                     $matches = true;
@@ -500,16 +498,86 @@ final class DevDbSqlTranslator
                     }
 
                     if ($matches && $action === 'CASCADE') {
+                        $matchedRows++;
                         continue;
                     }
 
                     if ($matches && $action === 'SET NULL') {
+                        $matchedRows++;
                         foreach ($childColumns as $childColumn) {
                             $childRow[(string) $childColumn] = null;
                         }
                     }
 
+                    if ($matches && !in_array($action, ['CASCADE', 'SET NULL'], true)) {
+                        $matchedRows++;
+                    }
+
                     $rows[] = $childRow;
+                }
+
+                if ($matchedRows > 0 && !in_array($action, ['CASCADE', 'SET NULL'], true)) {
+                    throw new DevDbException('DevDB foreign key restrict violation on delete from "' . $parentTable . '".');
+                }
+
+                $this->store->replaceTable((string) $childTable, $rows);
+            }
+        }
+    }
+
+    private function applyForeignKeyUpdateActions(string $parentTable, array $oldParentRow, array $newParentRow): void
+    {
+        $schema = $this->store->schema();
+
+        foreach (($schema['tables'] ?? []) as $childTable => $meta) {
+            foreach (($meta['indexes'] ?? []) as $index) {
+                if (($index['name'] ?? null) !== 'foreign' || ($index['references_table'] ?? null) !== $parentTable) {
+                    continue;
+                }
+
+                $childColumns = array_values((array) ($index['columns'] ?? []));
+                $parentColumns = array_values((array) ($index['references_columns'] ?? []));
+                if ($childColumns === [] || $parentColumns === []) {
+                    continue;
+                }
+
+                $oldValues = array_map(fn (string $column): mixed => $oldParentRow[$column] ?? null, $parentColumns);
+                $newValues = array_map(fn (string $column): mixed => $newParentRow[$column] ?? null, $parentColumns);
+                if ($oldValues === $newValues) {
+                    continue;
+                }
+
+                $action = strtoupper((string) ($index['on_update'] ?? ''));
+                $rows = [];
+                $matchedRows = 0;
+
+                foreach ($this->store->readTable((string) $childTable) as $childRow) {
+                    $matches = true;
+                    foreach ($childColumns as $offset => $childColumn) {
+                        if (($childRow[(string) $childColumn] ?? null) !== ($oldValues[$offset] ?? null)) {
+                            $matches = false;
+                            break;
+                        }
+                    }
+
+                    if ($matches) {
+                        $matchedRows++;
+                        if ($action === 'CASCADE') {
+                            foreach ($childColumns as $offset => $childColumn) {
+                                $childRow[(string) $childColumn] = $newValues[$offset] ?? null;
+                            }
+                        } elseif ($action === 'SET NULL') {
+                            foreach ($childColumns as $childColumn) {
+                                $childRow[(string) $childColumn] = null;
+                            }
+                        }
+                    }
+
+                    $rows[] = $childRow;
+                }
+
+                if ($matchedRows > 0 && !in_array($action, ['CASCADE', 'SET NULL'], true)) {
+                    throw new DevDbException('DevDB foreign key restrict violation on update of "' . $parentTable . '".');
                 }
 
                 $this->store->replaceTable((string) $childTable, $rows);

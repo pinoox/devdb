@@ -278,6 +278,27 @@ SQL);
         ->and(array_keys($db->store()->schema()['routines'] ?? []))->toContain('trigger:posts_ai', 'procedure:refresh_posts');
 });
 
+it('supports foreign key update actions and restrict behavior', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_foreign_key_actions'));
+    $db->executeDump(<<<'SQL'
+CREATE TABLE users (id integer primary key, email varchar(120));
+CREATE TABLE posts (
+  id integer primary key auto_increment,
+  user_id integer,
+  title varchar(120),
+  CONSTRAINT posts_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE RESTRICT ON UPDATE CASCADE
+);
+INSERT INTO users (id, email) VALUES (10, 'ava@example.com');
+INSERT INTO posts (user_id, title) VALUES (10, 'A');
+SQL);
+
+    $db->statement('update users set id = 20 where id = 10');
+
+    expect($db->selectOne('select user_id from posts where title = ?', ['A'])->user_id)->toBe(20)
+        ->and(fn () => $db->statement('delete from users where id = 20'))
+        ->toThrow(DevDbException::class, 'foreign key restrict violation');
+});
+
 it('throws useful errors for unsupported or invalid raw SQL', function () {
     $db = DevDatabase::open(devdb_test_path('raw_errors'));
     $db->statement('create table posts (id integer primary key, title varchar(120))');
