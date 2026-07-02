@@ -299,6 +299,17 @@ SQL);
         ->toThrow(DevDbException::class, 'foreign key restrict violation');
 });
 
+it('supports arithmetic expressions and scalar subqueries in raw SQL', function () {
+    $db = DevDatabase::open(devdb_test_path('raw_expressions'));
+    $db->statement('create table orders (id integer primary key auto_increment, customer varchar(80), price int, quantity int)');
+    $db->statement("insert into orders (customer, price, quantity) values ('Ava', 20, 2), ('Noah', 15, 1), ('Mina', 10, 4)");
+
+    $rows = $db->select('select customer, price * quantity as total from orders where price * quantity >= (select max(price) from orders) order by total desc');
+
+    expect(array_map(fn ($row) => $row->customer, $rows))->toBe(['Ava', 'Mina'])
+        ->and(array_map(fn ($row) => $row->total, $rows))->toBe([40, 40]);
+});
+
 it('throws useful errors for unsupported or invalid raw SQL', function () {
     $db = DevDatabase::open(devdb_test_path('raw_errors'));
     $db->statement('create table posts (id integer primary key, title varchar(120))');

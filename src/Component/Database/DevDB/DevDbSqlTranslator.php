@@ -2010,6 +2010,14 @@ final class DevDbSqlTranslator
             return $this->evaluateFunction($function, $values);
         }
 
+        if (($arithmetic = $this->splitArithmeticExpression($expression)) !== null) {
+            [$leftExpression, $operator, $rightExpression] = $arithmetic;
+            $left = $this->expressionValue($row, $leftExpression, $bindings, $bindingOffset);
+            $right = $this->expressionValue($row, $rightExpression, $bindings, $bindingOffset);
+
+            return $this->evaluateArithmetic($left, $operator, $right);
+        }
+
         if (preg_match('/^(?<left>.+?)\s*(?<operator>=|==|!=|<>|>=|<=|>|<)\s*(?<right>.+)$/is', $expression, $match) === 1) {
             $left = $this->expressionValue($row, $match['left'], $bindings, $bindingOffset);
             $right = $this->conditionValue($row, $match['right'], $bindings, $bindingOffset);
@@ -2018,6 +2026,81 @@ final class DevDbSqlTranslator
         }
 
         return $this->valueForColumn($row, $expression);
+    }
+
+    private function splitArithmeticExpression(string $expression): ?array
+    {
+        foreach ([['+', '-'], ['*', '/']] as $operators) {
+            $position = $this->lastTopLevelOperatorPosition($expression, $operators);
+            if ($position === null) {
+                continue;
+            }
+
+            return [
+                trim(substr($expression, 0, $position)),
+                $expression[$position],
+                trim(substr($expression, $position + 1)),
+            ];
+        }
+
+        return null;
+    }
+
+    private function lastTopLevelOperatorPosition(string $expression, array $operators): ?int
+    {
+        $depth = 0;
+        $quote = null;
+
+        for ($i = strlen($expression) - 1; $i >= 0; $i--) {
+            $char = $expression[$i];
+            if ($quote !== null) {
+                if ($char === $quote && ($i === 0 || $expression[$i - 1] !== '\\')) {
+                    $quote = null;
+                }
+                continue;
+            }
+
+            if ($char === "'" || $char === '"') {
+                $quote = $char;
+                continue;
+            }
+
+            if ($char === ')') {
+                $depth++;
+                continue;
+            }
+
+            if ($char === '(') {
+                $depth--;
+                continue;
+            }
+
+            if ($depth !== 0 || !in_array($char, $operators, true)) {
+                continue;
+            }
+
+            if (($char === '+' || $char === '-') && ($i === 0 || preg_match('/[\s(+\-*\/]/', $expression[$i - 1]) === 1)) {
+                continue;
+            }
+
+            return $i;
+        }
+
+        return null;
+    }
+
+    private function evaluateArithmetic(mixed $left, string $operator, mixed $right): int|float|null
+    {
+        if (!is_numeric($left) || !is_numeric($right)) {
+            return null;
+        }
+
+        return match ($operator) {
+            '+' => $left + $right,
+            '-' => $left - $right,
+            '*' => $left * $right,
+            '/' => (float) $right == 0.0 ? null : $left / $right,
+        };
     }
 
     private function evaluateCaseExpression(array $row, string $body, array $bindings, int &$bindingOffset): mixed
