@@ -195,6 +195,8 @@ final class DevDbStore
 
         return [
             'generated_at' => date(DATE_ATOM),
+            'file_count' => count($files),
+            'total_size' => array_sum(array_map(static fn (array $file): int => (int) ($file['size'] ?? 0), $files)),
             'files' => $files,
         ];
     }
@@ -233,6 +235,8 @@ final class DevDbStore
                 'columns' => count($meta['columns'] ?? []),
                 'rows' => count($this->readTable((string) $table)),
                 'primary_key' => $meta['primary_key'] ?? null,
+                'indexes' => count($meta['indexes'] ?? []),
+                'data_size' => is_file($this->dataPath((string) $table)) ? filesize($this->dataPath((string) $table)) ?: 0 : 0,
             ];
         }
 
@@ -240,6 +244,9 @@ final class DevDbStore
             'path' => $this->root,
             'schema_version' => $schema['version'] ?? self::SCHEMA_VERSION,
             'table_count' => count($tables),
+            'row_count' => array_sum(array_map(static fn (array $table): int => (int) $table['rows'], $tables)),
+            'data_size' => array_sum(array_map(static fn (array $table): int => (int) $table['data_size'], $tables)),
+            'has_manifest_changes' => $this->hasChangesSinceManifest(),
             'tables' => $tables,
             'migration_count' => count($this->migrations()),
         ];

@@ -27,6 +27,9 @@ it('stores schema, rows, indexes, sequences, and table inspection metadata', fun
     expect($store->hasTable('users'))->toBeTrue()
         ->and($status['table_count'])->toBe(1)
         ->and($status['tables'][0]['rows'])->toBe(1)
+        ->and($status['row_count'])->toBe(1)
+        ->and($status['data_size'])->toBeGreaterThan(0)
+        ->and($status['tables'][0]['indexes'])->toBe(1)
         ->and($inspect['primary_key'])->toBe('id')
         ->and($inspect['row_count'])->toBe(1)
         ->and($inspect['rows'][0]['email'])->toBe('ava@example.com')
@@ -121,6 +124,8 @@ it('tracks file changes using a manifest', function () {
 
     $manifest = $store->writeManifest();
     expect($manifest['files'])->not->toBeEmpty()
+        ->and($manifest['file_count'])->toBeGreaterThan(0)
+        ->and($manifest['total_size'])->toBeGreaterThan(0)
         ->and($store->hasChangesSinceManifest())->toBeFalse();
 
     $store->replaceTable('notes', [
