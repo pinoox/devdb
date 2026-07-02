@@ -34,7 +34,8 @@
   "scripts": {
     "test": "pest",
     "test:unit": "pest tests/Unit",
-    "test:feature": "pest tests/Feature"
+    "test:feature": "pest tests/Feature",
+    "test:compat": "pest tests/Compatibility"
   },
   "require-dev": {
     "pestphp/pest": "^2.36",
