@@ -10,26 +10,26 @@ class DevDbSchemaBuilder extends Builder
 {
     public function hasTable($table)
     {
-        return $this->store()->hasTable((string) $table);
+        return $this->store()->hasTable($this->tableName((string) $table));
     }
 
     public function create($table, Closure $callback)
     {
         $blueprint = $this->createBlueprint($table);
         $callback($blueprint);
-        $this->store()->createTable((string) $table, $this->columns($blueprint), $this->indexes($blueprint));
+        $this->store()->createTable($this->tableName((string) $table), $this->columns($blueprint), $this->indexes($blueprint));
     }
 
     public function table($table, Closure $callback)
     {
         $blueprint = $this->createBlueprint($table);
         $callback($blueprint);
-        $this->applyCommands((string) $table, $blueprint);
+        $this->applyCommands($this->tableName((string) $table), $blueprint);
     }
 
     public function drop($table)
     {
-        $this->store()->dropTable((string) $table);
+        $this->store()->dropTable($this->tableName((string) $table));
     }
 
     public function dropIfExists($table)
@@ -43,7 +43,7 @@ class DevDbSchemaBuilder extends Builder
     {
         $schema = $this->store()->schema();
 
-        return array_keys($schema['tables'][(string) $table]['columns'] ?? []);
+        return array_keys($schema['tables'][$this->tableName((string) $table)]['columns'] ?? []);
     }
 
     public function preview($table, Closure $callback): array
@@ -145,5 +145,17 @@ class DevDbSchemaBuilder extends Builder
     private function store(): DevDbStore
     {
         return $this->connection->devDbStore();
+    }
+
+    private function tableName(string $table): string
+    {
+        $table = trim($table);
+        $prefix = (string) $this->connection->getTablePrefix();
+
+        if ($table === '' || $prefix === '' || str_starts_with($table, $prefix)) {
+            return $table;
+        }
+
+        return $prefix . $table;
     }
 }

@@ -107,8 +107,13 @@ final class SqliteDevDbEngine implements DevDbEngineInterface
 
     public function clear(): void
     {
-        if (is_file($this->database)) {
-            @unlink($this->database);
+        if (!is_file($this->database)) {
+            return;
+        }
+
+        $pdo = $this->pdo();
+        foreach ($this->sqliteTables() as $table) {
+            $pdo->exec('DROP TABLE IF EXISTS "' . str_replace('"', '""', $table) . '"');
         }
     }
 

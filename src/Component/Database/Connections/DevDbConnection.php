@@ -3,10 +3,10 @@
 namespace Pinoox\Component\Database\Connections;
 
 use Illuminate\Database\Connection;
-use Illuminate\Database\Query\Grammars\Grammar as QueryGrammar;
 use Illuminate\Database\Query\Processors\Processor;
 use Illuminate\Database\Schema\Grammars\SQLiteGrammar as SchemaGrammar;
 use Pinoox\Component\Database\DevDB\DevDbException;
+use Pinoox\Component\Database\DevDB\DevDbQueryGrammar;
 use Pinoox\Component\Database\DevDB\DevDbQueryBuilder;
 use Pinoox\Component\Database\DevDB\DevDbSchemaBuilder;
 use Pinoox\Component\Database\DevDB\DevDbSqlTranslator;
@@ -124,7 +124,7 @@ class DevDbConnection extends Connection
 
     public function useDefaultQueryGrammar()
     {
-        $this->queryGrammar = new QueryGrammar($this);
+        $this->queryGrammar = new DevDbQueryGrammar($this);
     }
 
     public function useDefaultSchemaGrammar()
