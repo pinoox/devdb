@@ -5,6 +5,7 @@ namespace Pinoox\Terminal\DevDB;
 use Pinoox\Component\Terminal;
 use Pinoox\Terminal\DevDB\Concerns\InteractsWithDevDbCli;
 use Pinoox\Terminal\DevDB\Concerns\UsesDevDbStore;
+use Pinoox\Terminal\DevDB\Support\DevDbCliPager;
 use Pinoox\Terminal\DevDB\Support\DevDbCliPresenter;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -24,11 +25,13 @@ class DevDbInspectCommand extends Terminal
     {
         $this
             ->configureConnectionOptions($this)
+            ->configurePaginationOptions($this)
             ->addArgument('table', InputArgument::OPTIONAL, 'Table name')
-            ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Rows to show', 10)
+            ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Rows per page (alias of --per-page)', DevDbCliPager::DEFAULT_PER_PAGE)
             ->addOption('structure', null, InputOption::VALUE_NONE, 'Show columns only')
             ->addOption('data', null, InputOption::VALUE_NONE, 'Show rows only')
             ->addOption('relations', null, InputOption::VALUE_NONE, 'Show foreign keys and indexes only')
+            ->addOption('browse', 'b', InputOption::VALUE_NONE, 'Interactive paginated row browser')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON')
             ->addOption('no-interaction', 'n', InputOption::VALUE_NONE, 'Disable prompts');
     }
@@ -38,7 +41,6 @@ class DevDbInspectCommand extends Terminal
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
         $interactive = $input->isInteractive() && !$input->getOption('no-interaction');
-        $limit = (int) $input->getOption('limit');
 
         if (!$this->bootstrapRuntime($input, $io)) {
             return Command::FAILURE;
@@ -51,8 +53,16 @@ class DevDbInspectCommand extends Terminal
             return Command::FAILURE;
         }
 
+        [$offset, $perPage] = $this->resolvePagination($input);
+
+        if ($input->getOption('browse') && $interactive) {
+            $this->browseTableData($io, $runtime, $table, $perPage);
+
+            return Command::SUCCESS;
+        }
+
         try {
-            $inspect = $this->describeTable($runtime, $table, $limit);
+            $inspect = $this->describeTable($runtime, $table, $perPage, $offset);
         } catch (\Throwable $e) {
             $io->error($e->getMessage());
 
@@ -79,6 +89,12 @@ class DevDbInspectCommand extends Terminal
         }
 
         DevDbCliPresenter::renderTableOverview($io, $inspect, $view);
+
+        if ($interactive && $view === 'data' && ($inspect['row_count'] ?? 0) > $perPage) {
+            if ($io->confirm('Open interactive row browser?', false)) {
+                $this->browseTableData($io, $runtime, $table, $perPage);
+            }
+        }
 
         return Command::SUCCESS;
     }

@@ -10,7 +10,7 @@ interface DevDbEngineInterface
 
     public function status(): array;
 
-    public function inspectTable(string $table, int $limit = 10): array;
+    public function inspectTable(string $table, int $limit = 10, int $offset = 0): array;
 
     public function export(): array;
 

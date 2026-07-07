@@ -33,9 +33,9 @@ final class JsonDevDbEngine implements DevDbEngineInterface
         return $status;
     }
 
-    public function inspectTable(string $table, int $limit = 10): array
+    public function inspectTable(string $table, int $limit = 10, int $offset = 0): array
     {
-        return $this->store->inspectTable($table, $limit);
+        return $this->store->inspectTable($table, $limit, $offset);
     }
 
     public function export(): array

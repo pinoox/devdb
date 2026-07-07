@@ -111,9 +111,9 @@ final class DevDbRuntime
         return $status;
     }
 
-    public function inspectTable(string $table, int $limit = 10): array
+    public function inspectTable(string $table, int $limit = 10, int $offset = 0): array
     {
-        return $this->engineDriver()->inspectTable($table, $limit);
+        return $this->engineDriver()->inspectTable($table, $limit, $offset);
     }
 
     public function export(): array

@@ -10,20 +10,24 @@ final class DevDbCliPresenter
     {
         $title = 'Pinoox DevDB';
         if (is_string($connection) && $connection !== '') {
-            $title .= ' — ' . $connection;
+            $title .= ' · ' . $connection;
         }
 
-        $io->title($title);
+        DevDbCliTheme::banner($io, $title, (string) ($status['path'] ?? ''));
+
         $io->definitionList(
             ['Connection' => (string) ($connection ?? $status['connection'] ?? '-')],
-            ['Path' => (string) ($status['path'] ?? '-')],
             ['Engine' => (string) ($status['engine'] ?? 'json')],
             ['Database' => (string) ($status['database'] ?? '-')],
-            ['Schema version' => (string) ($status['schema_version'] ?? '-')],
-            ['Tables' => (string) ($status['table_count'] ?? 0)],
-            ['Rows' => (string) ($status['row_count'] ?? 0)],
-            ['Migrations' => (string) ($status['migration_count'] ?? 0)],
+            ['Schema' => (string) ($status['schema_version'] ?? '-')],
         );
+
+        DevDbCliTheme::statLine($io, [
+            'tables' => DevDbCliTheme::formatNumber((int) ($status['table_count'] ?? 0)),
+            'rows' => DevDbCliTheme::formatNumber((int) ($status['row_count'] ?? 0)),
+            'migrations' => DevDbCliTheme::formatNumber((int) ($status['migration_count'] ?? 0)),
+            'data size' => DevDbCliTheme::formatBytes((int) ($status['data_size'] ?? 0)),
+        ]);
     }
 
     /**
@@ -37,13 +41,14 @@ final class DevDbCliPresenter
             return;
         }
 
-        $io->section('DevDB connections');
+        DevDbCliTheme::banner($io, 'DevDB connections', count($entries) . ' configured store(s)');
+
         $io->table(
-            ['Name', 'Source', 'Path', 'Engine', 'Prefix', 'Shared path'],
+            ['Name', 'Source', 'Path', 'Engine', 'Prefix', 'Shared'],
             array_map(static fn (array $entry) => [
-                (string) ($entry['name'] ?? '-'),
+                DevDbCliTheme::truncate((string) ($entry['name'] ?? '-'), 24),
                 self::connectionSourceLabel($entry),
-                (string) ($entry['path'] ?? '-'),
+                DevDbCliTheme::truncate((string) ($entry['path'] ?? '-'), 36),
                 (string) ($entry['engine'] ?? 'auto'),
                 (string) ($entry['prefix'] ?? '-'),
                 !empty($entry['shared_path']) ? 'yes' : 'no',
@@ -58,10 +63,10 @@ final class DevDbCliPresenter
     public static function connectionChoiceLabel(array $entry): string
     {
         $label = (string) ($entry['label'] ?? $entry['name'] ?? 'DevDB');
+        $engine = (string) ($entry['engine'] ?? 'auto');
         $path = (string) ($entry['path'] ?? '');
-        $suffix = $path !== '' ? ' — ' . $path : '';
 
-        return $label . $suffix;
+        return sprintf('%s [%s] — %s', $label, $engine, DevDbCliTheme::truncate($path, 40));
     }
 
     /**
@@ -78,13 +83,25 @@ final class DevDbCliPresenter
 
     public static function renderTables(SymfonyStyle $io, array $status, bool $withHint = true): void
     {
-        $rows = array_map(static fn (array $table) => [
-            (string) ($table['table'] ?? '-'),
-            (string) ($table['columns'] ?? 0),
-            (string) ($table['rows'] ?? 0),
-            (string) ($table['primary_key'] ?? '-'),
-            (string) ($table['indexes'] ?? 0),
-        ], $status['tables'] ?? []);
+        $tables = $status['tables'] ?? [];
+        $rows = [];
+        $index = 1;
+
+        foreach ($tables as $table) {
+            if (!is_array($table)) {
+                continue;
+            }
+
+            $rows[] = [
+                (string) $index,
+                (string) ($table['table'] ?? '-'),
+                (string) ($table['columns'] ?? 0),
+                DevDbCliTheme::formatNumber((int) ($table['rows'] ?? 0)),
+                (string) ($table['primary_key'] ?? '-'),
+                (string) ($table['indexes'] ?? 0),
+            ];
+            $index++;
+        }
 
         if ($rows === []) {
             $io->warning('No tables found in DevDB.');
@@ -92,20 +109,30 @@ final class DevDbCliPresenter
             return;
         }
 
-        $io->section('Tables');
-        $io->table(['Table', 'Columns', 'Rows', 'Primary key', 'Indexes'], $rows);
+        DevDbCliTheme::banner($io, 'Tables', DevDbCliTheme::formatNumber(count($rows)) . ' table(s)');
+        $io->table(['#', 'Table', 'Columns', 'Rows', 'Primary key', 'Indexes'], $rows);
 
         if ($withHint) {
-            $io->note('Use `php pinoox devdb:inspect <table>` or `php pinoox devdb:explore` for details.');
+            $io->note('Try `php pinoox devdb:explore` for an interactive browser, or `devdb:inspect <table> --page=2`.');
         }
     }
 
     public static function renderTableOverview(SymfonyStyle $io, array $inspect, string $view = 'all'): void
     {
-        $io->title('DevDB table: ' . ($inspect['table'] ?? '-'));
+        $table = (string) ($inspect['table'] ?? '-');
+        $meta = DevDbCliPager::meta(
+            (int) ($inspect['offset'] ?? 0),
+            (int) ($inspect['limit'] ?? DevDbCliPager::DEFAULT_PER_PAGE),
+            (int) ($inspect['row_count'] ?? 0),
+        );
+
+        DevDbCliTheme::banner(
+            $io,
+            'Table · ' . $table,
+            DevDbCliPager::label($meta) . ' · PK ' . (string) ($inspect['primary_key'] ?? '-'),
+        );
+
         $io->definitionList(
-            ['Rows' => (string) ($inspect['row_count'] ?? 0)],
-            ['Primary key' => (string) ($inspect['primary_key'] ?? '-')],
             ['Foreign keys' => (string) count($inspect['foreign_keys'] ?? [])],
             ['Indexes' => (string) count($inspect['indexes_list'] ?? []) + count($inspect['unique_indexes'] ?? [])],
         );
@@ -139,15 +166,15 @@ final class DevDbCliPresenter
             $rows[] = [
                 (string) $name,
                 (string) ($column['type'] ?? 'string'),
-                !empty($column['primary']) ? 'yes' : 'no',
+                !empty($column['primary']) ? '●' : '',
                 !empty($column['nullable']) ? 'yes' : 'no',
                 !empty($column['auto_increment']) ? 'yes' : 'no',
-                self::formatScalar($column['default'] ?? '-'),
+                DevDbCliTheme::truncate($column['default'] ?? '-', 28),
             ];
         }
 
         $io->section('Columns');
-        $io->table(['Column', 'Type', 'Primary', 'Nullable', 'Auto inc.', 'Default'], $rows);
+        $io->table(['Column', 'Type', 'PK', 'Null', 'Auto', 'Default'], $rows);
     }
 
     public static function renderRelations(SymfonyStyle $io, array $inspect): void
@@ -158,7 +185,7 @@ final class DevDbCliPresenter
             $io->table(
                 ['Name', 'Columns', 'References', 'On update', 'On delete'],
                 array_map(static fn (array $foreignKey) => [
-                    (string) ($foreignKey['name'] ?? '-'),
+                    DevDbCliTheme::truncate((string) ($foreignKey['name'] ?? '-'), 28),
                     implode(', ', $foreignKey['columns'] ?? []),
                     self::formatReference($foreignKey),
                     (string) ($foreignKey['on_update'] ?? '-'),
@@ -178,7 +205,7 @@ final class DevDbCliPresenter
                 ['Type', 'Name', 'Columns'],
                 array_map(static fn (array $index) => [
                     (string) ($index['type'] ?? 'index'),
-                    (string) ($index['name'] ?? '-'),
+                    DevDbCliTheme::truncate((string) ($index['name'] ?? '-'), 32),
                     implode(', ', $index['columns'] ?? []),
                 ], $indexes),
             );
@@ -186,31 +213,44 @@ final class DevDbCliPresenter
 
         if ($foreignKeys === [] && $indexes === []) {
             $io->section('Relations');
-            $io->text('No foreign keys or indexes defined for this table.');
+            $io->text('  No foreign keys or indexes defined for this table.');
         }
     }
 
-    public static function renderRows(SymfonyStyle $io, array $inspect): void
+    public static function renderRows(SymfonyStyle $io, array $inspect, bool $showFooter = true): void
     {
         $rows = $inspect['rows'] ?? [];
+        $meta = DevDbCliPager::meta(
+            (int) ($inspect['offset'] ?? 0),
+            (int) ($inspect['limit'] ?? DevDbCliPager::DEFAULT_PER_PAGE),
+            (int) ($inspect['row_count'] ?? 0),
+        );
+
+        $io->section('Rows · ' . DevDbCliPager::label($meta));
+
         if ($rows === []) {
-            $io->section('Rows');
-            $io->text('No rows found.');
+            $io->text('  No rows on this page.');
 
             return;
         }
 
         $columns = array_keys($rows[0]);
-        $io->section('Rows');
-        $io->table($columns, array_map(static fn (array $row) => array_map(
-            static fn (string $column) => self::formatScalar($row[$column] ?? null),
-            $columns,
-        ), $rows));
+        $tableRows = [];
+        $rowNumber = (int) ($meta['from'] ?? 1);
 
-        $shown = count($rows);
-        $total = (int) ($inspect['row_count'] ?? $shown);
-        if ($total > $shown) {
-            $io->note(sprintf('Showing %d of %d rows. Use --limit to see more.', $shown, $total));
+        foreach ($rows as $row) {
+            $line = [(string) $rowNumber];
+            foreach ($columns as $column) {
+                $line[] = DevDbCliTheme::truncate($row[$column] ?? null, 40);
+            }
+            $tableRows[] = $line;
+            $rowNumber++;
+        }
+
+        $io->table(array_merge(['#'], $columns), $tableRows);
+
+        if ($showFooter && ($meta['has_next'] ?? false)) {
+            $io->note('More rows available — use --page, --offset, or browse interactively in devdb:explore.');
         }
     }
 
@@ -228,10 +268,10 @@ final class DevDbCliPresenter
             }
 
             $choices[$name] = sprintf(
-                '%s (%d rows, %d columns)',
+                '%s  ·  %s rows  ·  %s cols',
                 $name,
-                (int) ($table['rows'] ?? 0),
-                (int) ($table['columns'] ?? 0),
+                DevDbCliTheme::formatNumber((int) ($table['rows'] ?? 0)),
+                DevDbCliTheme::formatNumber((int) ($table['columns'] ?? 0)),
             );
         }
 
@@ -248,22 +288,5 @@ final class DevDbCliPresenter
         }
 
         return $table . '(' . implode(', ', $columns) . ')';
-    }
-
-    private static function formatScalar(mixed $value): string
-    {
-        if ($value === null) {
-            return 'NULL';
-        }
-
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
-        }
-
-        if (is_scalar($value)) {
-            return (string) $value;
-        }
-
-        return json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '';
     }
 }

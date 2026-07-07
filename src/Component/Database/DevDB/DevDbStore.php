@@ -309,7 +309,7 @@ final class DevDbStore
         ];
     }
 
-    public function inspectTable(string $table, int $limit = 10): array
+    public function inspectTable(string $table, int $limit = 10, int $offset = 0): array
     {
         $schema = $this->schema();
         $meta = $schema['tables'][$table] ?? null;
@@ -318,13 +318,23 @@ final class DevDbStore
             throw new DevDbException('DevDB table "' . $table . '" does not exist.');
         }
 
+        $limit = max(0, $limit);
+        $offset = max(0, $offset);
+        $allRows = $this->readTable($table);
+        $total = count($allRows);
+        $pagination = DevDbPagination::meta($offset, $limit > 0 ? $limit : DevDbPagination::DEFAULT_PER_PAGE, $total);
+
         return [
             'table' => $table,
             'columns' => $meta['columns'] ?? [],
             'indexes' => $meta['indexes'] ?? [],
             'primary_key' => $meta['primary_key'] ?? null,
-            'rows' => array_slice($this->readTable($table), 0, max(0, $limit)),
-            'row_count' => count($this->readTable($table)),
+            'rows' => array_slice($allRows, $offset, $limit),
+            'row_count' => $total,
+            'offset' => $pagination['offset'],
+            'limit' => $pagination['limit'],
+            'page' => $pagination['page'],
+            'total_pages' => $pagination['total_pages'],
         ];
     }
 

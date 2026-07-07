@@ -5,6 +5,7 @@ namespace Pinoox\Terminal\DevDB;
 use Pinoox\Component\Terminal;
 use Pinoox\Terminal\DevDB\Concerns\InteractsWithDevDbCli;
 use Pinoox\Terminal\DevDB\Concerns\UsesDevDbStore;
+use Pinoox\Terminal\DevDB\Support\DevDbCliPager;
 use Pinoox\Terminal\DevDB\Support\DevDbCliPresenter;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -23,9 +24,11 @@ class DevDbTablesCommand extends Terminal
     {
         $this
             ->configureConnectionOptions($this)
+            ->configurePaginationOptions($this)
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON')
             ->addOption('inspect', 'i', InputOption::VALUE_NONE, 'Prompt to inspect a selected table')
-            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows to show after --inspect', 10)
+            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows per page after --inspect', DevDbCliPager::DEFAULT_PER_PAGE)
+            ->addOption('browse', 'b', InputOption::VALUE_NONE, 'Open paginated row browser after --inspect')
             ->addOption('no-interaction', 'n', InputOption::VALUE_NONE, 'Disable prompts');
     }
 
@@ -66,8 +69,18 @@ class DevDbTablesCommand extends Terminal
             return Command::SUCCESS;
         }
 
+        $perPage = DevDbCliPager::normalizePerPage((int) $input->getOption('limit'));
+
+        if ($input->getOption('browse')) {
+            $this->browseTableData($io, $runtime, $table, $perPage);
+
+            return Command::SUCCESS;
+        }
+
+        [$offset] = $this->resolvePagination($input);
+
         try {
-            $inspect = $this->describeTable($runtime, $table, (int) $input->getOption('limit'));
+            $inspect = $this->describeTable($runtime, $table, $perPage, $offset);
         } catch (\Throwable $e) {
             $io->error($e->getMessage());
 

@@ -5,7 +5,9 @@ namespace Pinoox\Terminal\DevDB;
 use Pinoox\Component\Terminal;
 use Pinoox\Terminal\DevDB\Concerns\InteractsWithDevDbCli;
 use Pinoox\Terminal\DevDB\Concerns\UsesDevDbStore;
+use Pinoox\Terminal\DevDB\Support\DevDbCliPager;
 use Pinoox\Terminal\DevDB\Support\DevDbCliPresenter;
+use Pinoox\Terminal\DevDB\Support\DevDbCliTheme;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -26,8 +28,9 @@ class DevDbExploreCommand extends Terminal
     {
         $this
             ->configureConnectionOptions($this)
+            ->configurePaginationOptions($this)
             ->addOption('table', 't', InputOption::VALUE_REQUIRED, 'Open a table directly')
-            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows to show when inspecting data', 10)
+            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows per page (alias of --per-page)', DevDbCliPager::DEFAULT_PER_PAGE)
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON for direct table inspect')
             ->addOption('no-interaction', 'n', InputOption::VALUE_NONE, 'Disable prompts');
     }
@@ -44,7 +47,9 @@ class DevDbExploreCommand extends Terminal
                 return Command::FAILURE;
             }
 
-            return $this->renderDirectInspect($io, $this->runtime(), $directTable, (int) $input->getOption('limit'), (bool) $input->getOption('json'));
+            [$offset, $perPage] = $this->resolvePagination($input);
+
+            return $this->renderDirectInspect($io, $this->runtime(), $directTable, $perPage, $offset, (bool) $input->getOption('json'));
         }
 
         if (!$interactive) {
@@ -65,12 +70,14 @@ class DevDbExploreCommand extends Terminal
             return Command::FAILURE;
         }
 
-        $io->title('DevDB Explorer');
-        $io->text([
-            'Browse your local development database with guided prompts.',
-            'Use --connection or --path to target another DevDB store.',
-            'Press Ctrl+C any time to exit.',
+        DevDbCliTheme::banner($io, 'DevDB Explorer', 'Interactive local database browser');
+        $io->listing([
+            'Browse tables with pagination for large datasets',
+            'Use --connection or --path to target another DevDB store',
+            'Press Ctrl+C any time to exit',
         ]);
+
+        $defaultPerPage = DevDbCliPager::normalizePerPage((int) $input->getOption('limit'));
 
         while (true) {
             $runtime = $this->runtime();
@@ -112,12 +119,19 @@ class DevDbExploreCommand extends Terminal
                 continue;
             }
 
-            $limit = in_array($action, ['Table data', 'Full table inspect'], true)
-                ? $this->askRowLimit($io, (int) $input->getOption('limit'))
-                : 0;
+            if ($action === 'Browse table rows (paginated)') {
+                $perPage = $this->askRowLimit($io, $defaultPerPage);
+                $this->browseTableData($io, $runtime, $table, $perPage);
+                $io->newLine();
+                continue;
+            }
+
+            $perPage = in_array($action, ['Full table inspect'], true)
+                ? $this->askRowLimit($io, $defaultPerPage)
+                : DevDbCliPager::DEFAULT_PER_PAGE;
 
             try {
-                $inspect = $this->describeTable($runtime, $table, $limit);
+                $inspect = $this->describeTable($runtime, $table, $perPage, 0);
             } catch (\Throwable $e) {
                 $io->error($e->getMessage());
                 continue;
@@ -125,7 +139,6 @@ class DevDbExploreCommand extends Terminal
 
             $view = match ($action) {
                 'Table structure' => 'structure',
-                'Table data' => 'data',
                 'Foreign keys and indexes' => 'relations',
                 default => 'all',
             };
@@ -135,10 +148,10 @@ class DevDbExploreCommand extends Terminal
         }
     }
 
-    private function renderDirectInspect(SymfonyStyle $io, $runtime, string $table, int $limit, bool $asJson): int
+    private function renderDirectInspect(SymfonyStyle $io, $runtime, string $table, int $limit, int $offset, bool $asJson): int
     {
         try {
-            $inspect = $this->describeTable($runtime, $table, $limit);
+            $inspect = $this->describeTable($runtime, $table, $limit, $offset);
         } catch (\Throwable $e) {
             $io->error($e->getMessage());
 

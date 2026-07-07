@@ -4,9 +4,9 @@ namespace Pinoox\Component\Database\DevDB;
 
 final class DevDbTableDescriptor
 {
-    public static function describe(DevDbRuntime $runtime, string $table, int $limit = 10): array
+    public static function describe(DevDbRuntime $runtime, string $table, int $limit = 10, int $offset = 0): array
     {
-        $inspect = $runtime->inspectTable($table, $limit);
+        $inspect = $runtime->inspectTable($table, $limit, $offset);
 
         return self::enrich($inspect);
     }

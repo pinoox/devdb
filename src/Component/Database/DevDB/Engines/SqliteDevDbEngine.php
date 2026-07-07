@@ -4,6 +4,7 @@ namespace Pinoox\Component\Database\DevDB\Engines;
 
 use PDO;
 use Pinoox\Component\Database\DevDB\DevDbException;
+use Pinoox\Component\Database\DevDB\DevDbPagination;
 use Pinoox\Component\Database\DevDB\DevDbStore;
 
 final class SqliteDevDbEngine implements DevDbEngineInterface
@@ -56,16 +57,21 @@ final class SqliteDevDbEngine implements DevDbEngineInterface
         ];
     }
 
-    public function inspectTable(string $table, int $limit = 10): array
+    public function inspectTable(string $table, int $limit = 10, int $offset = 0): array
     {
         $columns = $this->sqliteColumns($table);
         if ($columns === []) {
             throw new DevDbException('DevDB table "' . $table . '" does not exist.');
         }
 
+        $limit = max(0, $limit);
+        $offset = max(0, $offset);
         $quoted = '"' . str_replace('"', '""', $table) . '"';
-        $rows = $this->pdo()->query('SELECT * FROM ' . $quoted . ' LIMIT ' . max(0, $limit))->fetchAll();
+        $rows = $this->pdo()->query(
+            'SELECT * FROM ' . $quoted . ' LIMIT ' . $limit . ' OFFSET ' . $offset,
+        )->fetchAll();
         $count = (int) $this->pdo()->query('SELECT COUNT(*) AS count FROM ' . $quoted)->fetch()['count'];
+        $pagination = DevDbPagination::meta($offset, $limit > 0 ? $limit : DevDbPagination::DEFAULT_PER_PAGE, $count);
 
         return [
             'table' => $table,
@@ -74,6 +80,10 @@ final class SqliteDevDbEngine implements DevDbEngineInterface
             'primary_key' => $this->sqlitePrimaryKey($table),
             'rows' => $rows,
             'row_count' => $count,
+            'offset' => $pagination['offset'],
+            'limit' => $pagination['limit'],
+            'page' => $pagination['page'],
+            'total_pages' => $pagination['total_pages'],
         ];
     }
 

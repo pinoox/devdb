@@ -35,7 +35,6 @@ class DevDbConnectionsCommand extends Terminal
             return Command::SUCCESS;
         }
 
-        $io->title('Pinoox DevDB connections');
         DevDbCliPresenter::renderConnectionCatalog($io, $entries);
 
         return Command::SUCCESS;
