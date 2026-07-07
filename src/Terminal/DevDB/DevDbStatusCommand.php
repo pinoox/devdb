@@ -43,15 +43,16 @@ class DevDbStatusCommand extends Terminal
             ['Migrations' => (string) $status['migration_count']],
         );
 
-        $rows = array_map(static fn ($table) => [
-            $table['table'],
-            (string) $table['columns'],
-            (string) $table['rows'],
-            $table['primary_key'] ?? '-',
-        ], $status['tables']);
-
-        if ($rows !== []) {
-            $io->table(['Table', 'Columns', 'Rows', 'Primary key'], $rows);
+        if (($status['tables'] ?? []) !== []) {
+            $io->section('Tables');
+            $io->table(['Table', 'Columns', 'Rows', 'Primary key', 'Indexes'], array_map(static fn ($table) => [
+                $table['table'],
+                (string) $table['columns'],
+                (string) $table['rows'],
+                $table['primary_key'] ?? '-',
+                (string) ($table['indexes'] ?? 0),
+            ], $status['tables']));
+            $io->note('Try `php pinoox devdb:explore` for an interactive browser or `php pinoox devdb:inspect <table>`.');
         }
 
         return Command::SUCCESS;

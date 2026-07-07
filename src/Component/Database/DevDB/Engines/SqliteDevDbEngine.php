@@ -70,7 +70,7 @@ final class SqliteDevDbEngine implements DevDbEngineInterface
         return [
             'table' => $table,
             'columns' => $columns,
-            'indexes' => [],
+            'indexes' => $this->sqliteIndexes($table),
             'primary_key' => $this->sqlitePrimaryKey($table),
             'rows' => $rows,
             'row_count' => $count,
@@ -174,5 +174,107 @@ final class SqliteDevDbEngine implements DevDbEngineInterface
         }
 
         return null;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function sqliteIndexes(string $table): array
+    {
+        if (!is_file($this->database)) {
+            return [];
+        }
+
+        $indexes = [];
+        $primary = $this->sqlitePrimaryKey($table);
+        if ($primary !== null) {
+            $indexes[] = [
+                'name' => 'primary',
+                'index' => 'primary',
+                'columns' => [$primary],
+            ];
+        }
+
+        $quoted = '"' . str_replace('"', '""', $table) . '"';
+        $statement = $this->pdo()->query('PRAGMA index_list(' . $quoted . ')');
+        if ($statement !== false) {
+            foreach ($statement->fetchAll() as $index) {
+                $name = (string) ($index['name'] ?? '');
+                if ($name === '') {
+                    continue;
+                }
+
+                $columns = $this->sqliteIndexColumns($name);
+                $indexes[] = [
+                    'name' => ((int) ($index['unique'] ?? 0)) === 1 ? 'unique' : 'index',
+                    'index' => $name,
+                    'columns' => $columns,
+                ];
+            }
+        }
+
+        foreach ($this->sqliteForeignKeys($table) as $foreignKey) {
+            $indexes[] = $foreignKey;
+        }
+
+        return $indexes;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function sqliteIndexColumns(string $indexName): array
+    {
+        $quoted = '"' . str_replace('"', '""', $indexName) . '"';
+        $statement = $this->pdo()->query('PRAGMA index_info(' . $quoted . ')');
+        if ($statement === false) {
+            return [];
+        }
+
+        $columns = [];
+        foreach ($statement->fetchAll() as $column) {
+            $name = (string) ($column['name'] ?? '');
+            if ($name !== '') {
+                $columns[] = $name;
+            }
+        }
+
+        return $columns;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function sqliteForeignKeys(string $table): array
+    {
+        if (!is_file($this->database)) {
+            return [];
+        }
+
+        $quoted = '"' . str_replace('"', '""', $table) . '"';
+        $statement = $this->pdo()->query('PRAGMA foreign_key_list(' . $quoted . ')');
+        if ($statement === false) {
+            return [];
+        }
+
+        $foreignKeys = [];
+        foreach ($statement->fetchAll() as $row) {
+            $from = (string) ($row['from'] ?? '');
+            if ($from === '') {
+                continue;
+            }
+
+            $foreignKeys[] = [
+                'name' => 'foreign',
+                'index' => $table . '_' . $from . '_foreign',
+                'columns' => [$from],
+                'on' => (string) ($row['table'] ?? ''),
+                'references' => [(string) ($row['to'] ?? '')],
+                'onUpdate' => (string) ($row['on_update'] ?? ''),
+                'onDelete' => (string) ($row['on_delete'] ?? ''),
+            ];
+        }
+
+        return $foreignKeys;
     }
 }
