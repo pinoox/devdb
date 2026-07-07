@@ -19,7 +19,9 @@ class DevDbSnapshotCommand extends Terminal
 
     protected function configure(): void
     {
-        $this->addArgument('action', InputArgument::OPTIONAL, 'create, list, restore, or delete', 'create')
+        $this
+            ->configureConnectionOptions($this)
+            ->addArgument('action', InputArgument::OPTIONAL, 'create, list, restore, or delete', 'create')
             ->addArgument('name', InputArgument::OPTIONAL, 'Snapshot name')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON');
     }
@@ -28,6 +30,11 @@ class DevDbSnapshotCommand extends Terminal
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
+
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
         $action = strtolower((string) $input->getArgument('action'));
         $name = $input->getArgument('name');
         $name = is_string($name) && $name !== '' ? $name : null;

@@ -18,13 +18,20 @@ class DevDbExportCommand extends Terminal
 
     protected function configure(): void
     {
-        $this->addArgument('file', InputArgument::OPTIONAL, 'Optional output JSON file');
+        $this
+            ->configureConnectionOptions($this)
+            ->addArgument('file', InputArgument::OPTIONAL, 'Optional output JSON file');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
+
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
         $json = json_encode($this->runtime()->export(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         $file = $input->getArgument('file');
 

@@ -25,6 +25,7 @@ class DevDbExploreCommand extends Terminal
     protected function configure(): void
     {
         $this
+            ->configureConnectionOptions($this)
             ->addOption('table', 't', InputOption::VALUE_REQUIRED, 'Open a table directly')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows to show when inspecting data', 10)
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON for direct table inspect')
@@ -35,30 +36,44 @@ class DevDbExploreCommand extends Terminal
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
-        $runtime = $this->runtime();
         $interactive = $input->isInteractive() && !$input->getOption('no-interaction');
 
         $directTable = trim((string) $input->getOption('table'));
         if ($directTable !== '') {
-            return $this->renderDirectInspect($io, $runtime, $directTable, (int) $input->getOption('limit'), (bool) $input->getOption('json'));
+            if (!$this->bootstrapRuntime($input, $io)) {
+                return Command::FAILURE;
+            }
+
+            return $this->renderDirectInspect($io, $this->runtime(), $directTable, (int) $input->getOption('limit'), (bool) $input->getOption('json'));
         }
 
         if (!$interactive) {
+            if (!$this->bootstrapRuntime($input, $io)) {
+                return Command::FAILURE;
+            }
+
+            $runtime = $this->runtime();
             $status = $runtime->status();
-            DevDbCliPresenter::renderStatusHeader($io, $status);
+            DevDbCliPresenter::renderStatusHeader($io, $status, $runtime->connectionName());
             DevDbCliPresenter::renderTables($io, $status, false);
             $io->note('Run without --no-interaction to use the guided explorer, or pass --table=<name>.');
 
             return Command::SUCCESS;
         }
 
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
         $io->title('DevDB Explorer');
         $io->text([
             'Browse your local development database with guided prompts.',
+            'Use --connection or --path to target another DevDB store.',
             'Press Ctrl+C any time to exit.',
         ]);
 
         while (true) {
+            $runtime = $this->runtime();
             $action = $this->askExploreAction($io);
 
             if ($action === 'Exit') {
@@ -67,9 +82,20 @@ class DevDbExploreCommand extends Terminal
                 return Command::SUCCESS;
             }
 
+            if ($action === 'Switch DevDB connection') {
+                $this->resetRuntime();
+                if (!$this->bootstrapRuntime($input, $io)) {
+                    continue;
+                }
+
+                $runtime = $this->runtime();
+                $io->success('Switched to ' . ($runtime->connectionName() ?? 'DevDB') . ' (' . $runtime->path() . ').');
+                continue;
+            }
+
             if ($action === 'Database status') {
                 $status = $runtime->status();
-                DevDbCliPresenter::renderStatusHeader($io, $status);
+                DevDbCliPresenter::renderStatusHeader($io, $status, $runtime->connectionName());
                 DevDbCliPresenter::renderTables($io, $status, false);
                 $io->newLine();
                 continue;
@@ -123,6 +149,10 @@ class DevDbExploreCommand extends Terminal
             $io->writeln(json_encode($inspect, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
             return Command::SUCCESS;
+        }
+
+        if ($runtime->connectionName() !== null) {
+            $io->note('Connection: ' . $runtime->connectionName());
         }
 
         DevDbCliPresenter::renderTableOverview($io, $inspect, 'all');

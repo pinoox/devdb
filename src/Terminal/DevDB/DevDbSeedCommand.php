@@ -23,6 +23,7 @@ class DevDbSeedCommand extends Terminal
     protected function configure(): void
     {
         $this
+            ->configureConnectionOptions($this)
             ->addArgument('package', InputArgument::OPTIONAL, $this->packageArgumentHelp())
             ->addOption('class', 'c', InputOption::VALUE_OPTIONAL, 'Run only one seeder class')
             ->addOption('force', null, InputOption::VALUE_NONE, 'Continue running even if a seeder fails');
@@ -31,7 +32,7 @@ class DevDbSeedCommand extends Terminal
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         parent::execute($input, $output);
-        $this->forceDevDbConnection();
+        $this->forceConnectionFromInput($input);
         $io = new SymfonyStyle($input, $output);
         $package = $this->resolvePackageRequired($input, $output, $io, [
             'sectionTitle' => 'Run DevDB seeders for',

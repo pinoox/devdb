@@ -6,10 +6,16 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 final class DevDbCliPresenter
 {
-    public static function renderStatusHeader(SymfonyStyle $io, array $status): void
+    public static function renderStatusHeader(SymfonyStyle $io, array $status, ?string $connection = null): void
     {
-        $io->title('Pinoox DevDB');
+        $title = 'Pinoox DevDB';
+        if (is_string($connection) && $connection !== '') {
+            $title .= ' — ' . $connection;
+        }
+
+        $io->title($title);
         $io->definitionList(
+            ['Connection' => (string) ($connection ?? $status['connection'] ?? '-')],
             ['Path' => (string) ($status['path'] ?? '-')],
             ['Engine' => (string) ($status['engine'] ?? 'json')],
             ['Database' => (string) ($status['database'] ?? '-')],
@@ -18,6 +24,56 @@ final class DevDbCliPresenter
             ['Rows' => (string) ($status['row_count'] ?? 0)],
             ['Migrations' => (string) ($status['migration_count'] ?? 0)],
         );
+    }
+
+    /**
+     * @param list<array<string, mixed>> $entries
+     */
+    public static function renderConnectionCatalog(SymfonyStyle $io, array $entries): void
+    {
+        if ($entries === []) {
+            $io->warning('No DevDB connections were found.');
+
+            return;
+        }
+
+        $io->section('DevDB connections');
+        $io->table(
+            ['Name', 'Source', 'Path', 'Engine', 'Prefix', 'Shared path'],
+            array_map(static fn (array $entry) => [
+                (string) ($entry['name'] ?? '-'),
+                self::connectionSourceLabel($entry),
+                (string) ($entry['path'] ?? '-'),
+                (string) ($entry['engine'] ?? 'auto'),
+                (string) ($entry['prefix'] ?? '-'),
+                !empty($entry['shared_path']) ? 'yes' : 'no',
+            ], $entries),
+        );
+        $io->note('Use --connection=<name> or --path=<storage-path> with devdb CLI commands.');
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    public static function connectionChoiceLabel(array $entry): string
+    {
+        $label = (string) ($entry['label'] ?? $entry['name'] ?? 'DevDB');
+        $path = (string) ($entry['path'] ?? '');
+        $suffix = $path !== '' ? ' — ' . $path : '';
+
+        return $label . $suffix;
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    public static function connectionSourceLabel(array $entry): string
+    {
+        if (($entry['source'] ?? '') === 'app') {
+            return 'app:' . (string) ($entry['package'] ?? '-');
+        }
+
+        return 'platform';
     }
 
     public static function renderTables(SymfonyStyle $io, array $status, bool $withHint = true): void

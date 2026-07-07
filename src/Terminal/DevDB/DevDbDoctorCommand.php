@@ -19,13 +19,20 @@ class DevDbDoctorCommand extends Terminal
 
     protected function configure(): void
     {
-        $this->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON');
+        $this
+            ->configureConnectionOptions($this)
+            ->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
+
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
         $result = (new DevDbDoctor($this->store()))->inspect();
 
         if ($input->getOption('json')) {

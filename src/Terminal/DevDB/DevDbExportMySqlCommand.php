@@ -20,7 +20,9 @@ class DevDbExportMySqlCommand extends Terminal
 
     protected function configure(): void
     {
-        $this->addArgument('file', InputArgument::OPTIONAL, 'Optional output SQL file')
+        $this
+            ->configureConnectionOptions($this)
+            ->addArgument('file', InputArgument::OPTIONAL, 'Optional output SQL file')
             ->addOption('no-drop', null, InputOption::VALUE_NONE, 'Do not emit DROP TABLE statements')
             ->addOption('schema-only', null, InputOption::VALUE_NONE, 'Export schema without row data')
             ->addOption('data-only', null, InputOption::VALUE_NONE, 'Export row data without schema')
@@ -31,6 +33,11 @@ class DevDbExportMySqlCommand extends Terminal
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
+
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
         $mode = $input->getOption('schema-only') ? 'schema' : ($input->getOption('data-only') ? 'data' : 'all');
         $tables = $this->tableOption((string) ($input->getOption('tables') ?? ''));
         $sql = (new DevDbMySqlExporter())->toSql($this->runtime()->export(), !$input->getOption('no-drop'), $tables, $mode);

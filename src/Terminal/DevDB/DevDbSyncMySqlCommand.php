@@ -22,7 +22,9 @@ class DevDbSyncMySqlCommand extends Terminal
 
     protected function configure(): void
     {
-        $this->addOption('dsn', null, InputOption::VALUE_REQUIRED, 'PDO MySQL DSN, for example mysql:host=127.0.0.1;port=3306;dbname=app')
+        $this
+            ->configureConnectionOptions($this)
+            ->addOption('dsn', null, InputOption::VALUE_REQUIRED, 'PDO MySQL DSN, for example mysql:host=127.0.0.1;port=3306;dbname=app')
             ->addOption('host', null, InputOption::VALUE_REQUIRED, 'MySQL host', (string) SystemConfig::env('DEVDB_MYSQL_HOST', '127.0.0.1'))
             ->addOption('port', null, InputOption::VALUE_REQUIRED, 'MySQL port', (string) SystemConfig::env('DEVDB_MYSQL_PORT', '3306'))
             ->addOption('database', null, InputOption::VALUE_REQUIRED, 'MySQL database name', (string) SystemConfig::env('DEVDB_MYSQL_DATABASE', ''))
@@ -39,6 +41,10 @@ class DevDbSyncMySqlCommand extends Terminal
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
+
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
 
         $exporter = new DevDbMySqlExporter();
         $mode = $input->getOption('schema-only') ? 'schema' : ($input->getOption('data-only') ? 'data' : 'all');

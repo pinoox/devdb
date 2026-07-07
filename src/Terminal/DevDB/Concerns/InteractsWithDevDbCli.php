@@ -68,7 +68,31 @@ trait InteractsWithDevDbCli
             'Foreign keys and indexes',
             'Full table inspect',
             'Database status',
+            'Switch DevDB connection',
             'Exit',
         ], 'List tables');
+    }
+
+    /**
+     * @param list<array<string, mixed>> $entries
+     * @return array<string, mixed>|null
+     */
+    protected function selectConnection(SymfonyStyle $io, array $entries, ?string $prompt = null): ?array
+    {
+        if ($entries === []) {
+            $io->warning('No DevDB connections were found in platform or app config.');
+
+            return null;
+        }
+
+        $choices = [];
+        foreach ($entries as $entry) {
+            $label = DevDbCliPresenter::connectionChoiceLabel($entry);
+            $choices[$label] = $entry;
+        }
+
+        $selected = $io->choice($prompt ?? 'Select a DevDB connection', array_keys($choices));
+
+        return $choices[$selected] ?? null;
     }
 }

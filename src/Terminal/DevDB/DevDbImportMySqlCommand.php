@@ -20,7 +20,9 @@ class DevDbImportMySqlCommand extends Terminal
 
     protected function configure(): void
     {
-        $this->addArgument('file', InputArgument::REQUIRED, 'Input SQL dump file')
+        $this
+            ->configureConnectionOptions($this)
+            ->addArgument('file', InputArgument::REQUIRED, 'Input SQL dump file')
             ->addOption('loose', null, InputOption::VALUE_NONE, 'Disable strict constraint checks during import')
             ->addOption('no-snapshot', null, InputOption::VALUE_NONE, 'Do not create a snapshot before import');
     }
@@ -29,6 +31,11 @@ class DevDbImportMySqlCommand extends Terminal
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
+
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
         $file = (string) $input->getArgument('file');
 
         if (!is_file($file)) {

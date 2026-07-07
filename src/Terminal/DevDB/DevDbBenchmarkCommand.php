@@ -21,6 +21,7 @@ class DevDbBenchmarkCommand extends Terminal
     protected function configure(): void
     {
         $this
+            ->configureConnectionOptions($this)
             ->addOption('rows', null, InputOption::VALUE_REQUIRED, 'Rows to insert during the benchmark', 100)
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON');
     }
@@ -29,6 +30,11 @@ class DevDbBenchmarkCommand extends Terminal
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
+
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
         $rows = max(1, (int) $input->getOption('rows'));
         $db = DevDatabase::open($this->store()->root());
         $result = (new DevDbBenchmark())->run($db, $rows);

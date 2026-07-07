@@ -22,6 +22,7 @@ class DevDbTablesCommand extends Terminal
     protected function configure(): void
     {
         $this
+            ->configureConnectionOptions($this)
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output JSON')
             ->addOption('inspect', 'i', InputOption::VALUE_NONE, 'Prompt to inspect a selected table')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows to show after --inspect', 10)
@@ -32,8 +33,14 @@ class DevDbTablesCommand extends Terminal
     {
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
-        $status = $this->runtime()->status();
         $interactive = $input->isInteractive() && !$input->getOption('no-interaction');
+
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
+        $runtime = $this->runtime();
+        $status = $runtime->status();
 
         if ($input->getOption('json')) {
             $io->writeln(json_encode($status['tables'] ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
@@ -41,7 +48,7 @@ class DevDbTablesCommand extends Terminal
             return Command::SUCCESS;
         }
 
-        DevDbCliPresenter::renderStatusHeader($io, $status);
+        DevDbCliPresenter::renderStatusHeader($io, $status, $runtime->connectionName());
         DevDbCliPresenter::renderTables($io, $status, !$input->getOption('inspect'));
 
         if (!$input->getOption('inspect')) {
@@ -54,13 +61,13 @@ class DevDbTablesCommand extends Terminal
             return Command::FAILURE;
         }
 
-        $table = $this->selectTable($io, $this->runtime(), 'Select a table to inspect');
+        $table = $this->selectTable($io, $runtime, 'Select a table to inspect');
         if ($table === null) {
             return Command::SUCCESS;
         }
 
         try {
-            $inspect = $this->describeTable($this->runtime(), $table, (int) $input->getOption('limit'));
+            $inspect = $this->describeTable($runtime, $table, (int) $input->getOption('limit'));
         } catch (\Throwable $e) {
             $io->error($e->getMessage());
 

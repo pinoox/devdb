@@ -23,6 +23,7 @@ class DevDbInspectCommand extends Terminal
     protected function configure(): void
     {
         $this
+            ->configureConnectionOptions($this)
             ->addArgument('table', InputArgument::OPTIONAL, 'Table name')
             ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Rows to show', 10)
             ->addOption('structure', null, InputOption::VALUE_NONE, 'Show columns only')
@@ -39,13 +40,19 @@ class DevDbInspectCommand extends Terminal
         $interactive = $input->isInteractive() && !$input->getOption('no-interaction');
         $limit = (int) $input->getOption('limit');
 
-        $table = $this->resolveTableName($io, $this->runtime(), $input->getArgument('table'), $interactive);
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
+        $runtime = $this->runtime();
+
+        $table = $this->resolveTableName($io, $runtime, $input->getArgument('table'), $interactive);
         if ($table === null) {
             return Command::FAILURE;
         }
 
         try {
-            $inspect = $this->describeTable($this->runtime(), $table, $limit);
+            $inspect = $this->describeTable($runtime, $table, $limit);
         } catch (\Throwable $e) {
             $io->error($e->getMessage());
 
@@ -65,6 +72,10 @@ class DevDbInspectCommand extends Terminal
             $view = 'data';
         } elseif ($input->getOption('relations')) {
             $view = 'relations';
+        }
+
+        if ($runtime->connectionName() !== null) {
+            $io->note('Connection: ' . $runtime->connectionName());
         }
 
         DevDbCliPresenter::renderTableOverview($io, $inspect, $view);

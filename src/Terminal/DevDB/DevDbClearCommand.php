@@ -18,7 +18,9 @@ class DevDbClearCommand extends Terminal
 
     protected function configure(): void
     {
-        $this->addOption('force', null, InputOption::VALUE_NONE, 'Clear without confirmation')
+        $this
+            ->configureConnectionOptions($this)
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Clear without confirmation')
             ->addOption('no-snapshot', null, InputOption::VALUE_NONE, 'Do not create a snapshot before clearing');
     }
 
@@ -27,7 +29,14 @@ class DevDbClearCommand extends Terminal
         parent::execute($input, $output);
         $io = new SymfonyStyle($input, $output);
 
-        if (!$input->getOption('force') && !$io->confirm('Clear Pinoox DevDB data?', false)) {
+        if (!$this->bootstrapRuntime($input, $io)) {
+            return Command::FAILURE;
+        }
+
+        $runtime = $this->runtime();
+        $target = $runtime->connectionName() ?? $runtime->path();
+
+        if (!$input->getOption('force') && !$io->confirm('Clear Pinoox DevDB data for ' . $target . '?', false)) {
             $io->warning('Cancelled.');
 
             return Command::SUCCESS;
@@ -38,7 +47,7 @@ class DevDbClearCommand extends Terminal
         }
 
         $this->runtime()->clear();
-        $io->success('Pinoox DevDB cleared.');
+        $io->success('Pinoox DevDB cleared for ' . $target . '.');
 
         return Command::SUCCESS;
     }
