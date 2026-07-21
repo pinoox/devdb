@@ -134,10 +134,15 @@ final class SqliteDevDbEngine implements DevDbEngineInterface
             @mkdir($dir, 0775, true);
         }
 
-        return new PDO('sqlite:' . $this->database, null, null, [
+        $pdo = new PDO('sqlite:' . $this->database, null, null, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]);
+        $pdo->exec('PRAGMA busy_timeout = 10000');
+        $pdo->exec('PRAGMA journal_mode = WAL');
+        $pdo->exec('PRAGMA synchronous = NORMAL');
+
+        return $pdo;
     }
 
     private function sqliteTables(): array

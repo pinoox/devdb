@@ -1,5 +1,6 @@
 {
   "name": "pinoox/devdb",
+  "version": "1.4.7",
   "description": "Development-only JSON/SQLite database driver for Pinoox apps",
   "keywords": [
     "pinoox",
