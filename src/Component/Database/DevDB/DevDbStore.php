@@ -645,7 +645,19 @@ final class DevDbStore
             return $default;
         }
 
-        $json = file_get_contents($path);
+        $handle = @fopen($path, 'rb');
+        if ($handle === false) {
+            return $default;
+        }
+
+        try {
+            flock($handle, LOCK_SH);
+            $json = stream_get_contents($handle);
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
+
         $data = is_string($json) ? json_decode($json, true) : null;
 
         return is_array($data) ? $data : $default;
